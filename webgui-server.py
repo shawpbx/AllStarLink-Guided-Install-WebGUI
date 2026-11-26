@@ -1242,9 +1242,9 @@ def _run_install_worker(cfg: dict) -> None:
         _run_cmd(["apt-get", "update", "-y"])
         _run_cmd([
             "apt-get", "install", "-y", "--no-install-recommends",
-            "curl", "wget", "git", "gnupg2", "ca-certificates", "lsb-release",
-            "apt-transport-https", "software-properties-common", "build-essential",
-            "dkms", "bc", "jq", "sqlite3", "net-tools", "dnsutils", "usbutils", "alsa-utils",
+            "curl", "wget", "git", "gnupg", "ca-certificates", "lsb-release",
+            "build-essential", "dkms", "bc", "jq", "sqlite3", "net-tools",
+            "usbutils", "alsa-utils",
         ])
 
         kernel_rel = os.uname().release
@@ -1272,8 +1272,10 @@ def _run_install_worker(cfg: dict) -> None:
         except OSError:
             pass
 
-        if _run_cmd(["apt-get", "update", "-y"], check=False) != 0 and codename != "bookworm":
-            _append_log(f"[WARN] Falling back from {codename} to bookworm suite for AllStarLink APT repo...")
+        update_rc = _run_cmd(["apt-get", "update", "-y"], check=False)
+        has_asl3 = _run_cmd(["apt-cache", "show", "asl3"], check=False) == 0
+        if (update_rc != 0 or not has_asl3) and codename != "bookworm":
+            _append_log(f"[WARN] AllStarLink APT repo did not expose 'asl3' for '{codename}'; falling back to bookworm suite...")
             for list_file in Path("/etc/apt/sources.list.d").glob("*allstar*"):
                 try:
                     txt = list_file.read_text(encoding="utf-8")
@@ -1282,7 +1284,11 @@ def _run_install_worker(cfg: dict) -> None:
                     pass
             _run_cmd(["apt-get", "update", "-y"])
 
-        _run_cmd(["apt-get", "install", "-y", "asl3", "asl3-asterisk", "asl3-menu"])
+        asl_pkgs = ["asl3"]
+        for extra_pkg in ("asl3-asterisk", "asl3-menu"):
+            if _run_cmd(["apt-cache", "show", extra_pkg], check=False) == 0:
+                asl_pkgs.append(extra_pkg)
+        _run_cmd(["apt-get", "install", "-y", *asl_pkgs])
         if p["installAllmon3"]:
             _run_cmd(["apt-get", "install", "-y", "allmon3"], check=False)
         if p["installCockpit"]:

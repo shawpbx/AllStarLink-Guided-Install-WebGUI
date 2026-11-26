@@ -1048,7 +1048,6 @@ export function generateInstallScript(config: NodeConfiguration): string {
   const dashboardHtml = generateStandaloneDashboardHtml(config);
 
   const isRpi = platform.target.startsWith('rpi');
-  const isTrixie = platformMeta?.codename === 'trixie';
 
   return `#!/usr/bin/env bash
 # ============================================================================
@@ -1084,9 +1083,9 @@ timedatectl set-timezone "${platform.timezone}" || true
 
 apt-get update -y
 apt-get install -y --no-install-recommends \\
-  curl wget git gnupg2 ca-certificates lsb-release apt-transport-https \\
-  software-properties-common build-essential dkms bc jq sqlite3 \\
-  python3 python3-pip net-tools dnsutils usbutils alsa-utils
+  curl wget git gnupg ca-certificates lsb-release \\
+  build-essential dkms bc jq sqlite3 \\
+  python3 net-tools usbutils alsa-utils
 
 # Install matching kernel headers for DAHDI (required by AllStarLink app_rpt)
 KERNEL_REL="$(uname -r)"
@@ -1117,15 +1116,22 @@ curl -fsSL "https://repo.allstarlink.org/public/asl-apt-repos.deb" -o /tmp/asl-a
 dpkg -i /tmp/asl-apt-repos.deb || apt-get -f install -y
 rm -f /tmp/asl-apt-repos.deb
 
-${isTrixie ? `# Debian 13 (Trixie) repository suite fallback check
-if ! apt-get update -y; then
-  echo "[WARN] AllStarLink repo did not publish '\${CODENAME}' suite yet; pinning bookworm suite compatibility..."
-  find /etc/apt/sources.list.d/ -name "*allstar*" -exec sed -i "s/\${CODENAME}/bookworm/g" {} +
-  apt-get update -y
-fi` : 'apt-get update -y'}
+if ! apt-get update -y || ! apt-cache show asl3 >/dev/null 2>&1; then
+  if [[ "\${CODENAME}" != "bookworm" ]]; then
+    echo "[WARN] AllStarLink repo did not expose 'asl3' for '\${CODENAME}'; pinning bookworm suite compatibility..."
+    find /etc/apt/sources.list.d/ -name "*allstar*" -exec sed -i "s/\${CODENAME}/bookworm/g" {} +
+    apt-get update -y
+  fi
+fi
 
-echo "[INFO] Installing ASL3 core packages (asl3, asl3-asterisk, asl3-menu, dahdi)..."
-apt-get install -y asl3 asl3-asterisk asl3-menu
+echo "[INFO] Installing ASL3 core packages..."
+ASL_PKGS=(asl3)
+for pkg in asl3-asterisk asl3-menu; do
+  if apt-cache show "\${pkg}" >/dev/null 2>&1; then
+    ASL_PKGS+=("\${pkg}")
+  fi
+done
+apt-get install -y "\${ASL_PKGS[@]}"
 
 ${platform.installAllmon3 ? `echo "[INFO] Installing Allmon3 Web Monitor..."
 apt-get install -y allmon3 || echo "[WARN] allmon3 package unavailable in current suite."` : '# Allmon3 skipped per configuration'}
