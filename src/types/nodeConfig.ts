@@ -37,6 +37,8 @@ export interface PlatformConfig {
   hostname: string;
   timezone: string;
   sshPort: number;
+  githubRepo: string;
+  githubBranch: string;
   enableZramSwap: boolean;
   installAllmon3: boolean;
   installCockpit: boolean;

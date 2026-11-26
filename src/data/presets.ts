@@ -106,6 +106,8 @@ export const DEFAULT_NODE_CONFIG: NodeConfiguration = {
     hostname: 'asl-node',
     timezone: 'UTC',
     sshPort: 22,
+    githubRepo: '',
+    githubBranch: 'main',
     enableZramSwap: true,
     installAllmon3: true,
     installCockpit: false,

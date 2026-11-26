@@ -20,6 +20,7 @@ import {
 import {
   generateInstallScript,
   generateStandaloneDashboardHtml,
+  normalizeGitHubRepo,
 } from '../utils/generators';
 import { downloadTextFile } from '../utils/download';
 
@@ -42,6 +43,9 @@ export function DashboardView({
   const errors = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');
   const scriptName = `install-asl-${allstar.nodeNumber || 'node'}.sh`;
+  const repoSlug = normalizeGitHubRepo(platform.githubRepo) || '<OWNER>/<REPO>';
+  const branch = platform.githubBranch.trim() || 'main';
+  const repoDir = repoSlug.includes('/') ? repoSlug.split('/')[1] : '<REPO>';
 
   const openStep = (step: WizardStep) => {
     onJumpToStep(step);
@@ -130,22 +134,22 @@ export function DashboardView({
 
   const deploySteps = [
     {
-      id: 'prep',
-      title: '01. Flash Fresh Raspberry Pi OS or Debian 13',
-      detail: `Target: ${platformMeta?.label}. Ensure SSH and internet access are active for APT and GitHub downloads.`,
-      cmd: 'sudo apt update && sudo apt upgrade -y',
+      id: 'github',
+      title: '01. Install WebGUI Directly from GitHub (Raspberry Pi OS / Debian 13)',
+      detail: `Clones ${repoSlug} (${branch}), builds the WebGUI, and starts asl-webgui.service on port ${platform.dashboardPort}.`,
+      cmd: `# One-line GitHub install:\ncurl -fsSL https://raw.githubusercontent.com/${repoSlug}/${branch}/install.sh | sudo bash -s -- --repo ${repoSlug} --port ${platform.dashboardPort}\n\n# Or clone & install manually:\ngit clone -b ${branch} https://github.com/${repoSlug}.git && cd ${repoDir} && sudo bash install.sh --port ${platform.dashboardPort}`,
     },
     {
       id: 'run',
-      title: '02. Transfer & Execute the Guided Installer',
-      detail: `Downloads ASL3${dvswitch.enabled ? ', DVSwitch Server' : ''}${mmdvmhost.enabled ? ', and compiles MMDVMHost' : ''}, then deploys your node configs and local HTML dashboard.`,
+      title: '02. Provision ASL3, DVSwitch & MMDVMHost onto the Node',
+      detail: `Downloads ASL3${dvswitch.enabled ? ', DVSwitch Server' : ''}${mmdvmhost.enabled ? ', and compiles MMDVMHost' : ''}, writes all config files, and launches services.`,
       cmd: `scp ${scriptName} root@<node-ip>:/root/ && ssh root@<node-ip> "chmod +x /root/${scriptName} && bash /root/${scriptName}"`,
     },
     {
       id: 'verify',
-      title: '03. Verify Services & Open On-Node Dashboard',
+      title: '03. Verify Services & Open Node WebGUI',
       detail: `Forward ${allstar.iaxPort}/udp on your router for inbound IAX2 links and open the local web dashboard.`,
-      cmd: `sudo asterisk -rx "rpt nodes ${allstar.nodeNumber || '<NODE>'}"${mmdvmhost.enabled ? '\nsudo systemctl status mmdvmhost' : ''}${platform.installLocalDashboard ? `\n# Local Dashboard: http://<node-ip>:${platform.dashboardPort}` : ''}`,
+      cmd: `sudo asterisk -rx "rpt nodes ${allstar.nodeNumber || '<NODE>'}"${mmdvmhost.enabled ? '\nsudo systemctl status mmdvmhost' : ''}\n# WebGUI URL: http://<node-ip>:${platform.dashboardPort}`,
     },
   ];
 

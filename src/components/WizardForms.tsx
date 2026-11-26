@@ -250,6 +250,39 @@ export function WizardForms({
               </div>
             </div>
 
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="sm:col-span-2">
+                <label htmlFor="githubRepo" className={labelCls}>
+                  GitHub Repository (owner/repo, Optional)
+                </label>
+                <input
+                  id="githubRepo"
+                  type="text"
+                  value={config.platform.githubRepo}
+                  onChange={(e) => updatePlatform({ githubRepo: e.target.value })}
+                  className={`${inputCls} font-mono`}
+                  placeholder="owner/allstarlink-webgui"
+                />
+                <p className={helpCls}>
+                  Customizes the one-line curl / git clone install commands and generated install.sh bootstrapper.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="githubBranch" className={labelCls}>
+                  GitHub Branch
+                </label>
+                <input
+                  id="githubBranch"
+                  type="text"
+                  value={config.platform.githubBranch}
+                  onChange={(e) => updatePlatform({ githubBranch: e.target.value })}
+                  className={`${inputCls} font-mono`}
+                  placeholder="main"
+                />
+              </div>
+            </div>
+
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
               <span className={labelCls}>System Packages &amp; Management Interfaces</span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -1,0 +1,61 @@
+# AllStarLink Guided Install WebGUI
+
+Interactive dashboard, configuration wizard, and automated node installer for **AllStarLink 3 (ASL3)**, **DVSwitch Server**, and **MMDVMHost** on fresh **Raspberry Pi OS** (Bookworm / Trixie 64-bit) and **Debian 13 (Trixie)** nodes.
+
+## GitHub Installation (Raspberry Pi / Debian 13)
+
+### Option 1: One-Line GitHub Install
+
+Replace `<OWNER>/<REPO>` with your GitHub repository path:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/<OWNER>/<REPO>/main/install.sh | sudo bash -s -- --repo <OWNER>/<REPO>
+```
+
+Custom port example (`--port 8080`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/<OWNER>/<REPO>/main/install.sh | sudo bash -s -- --repo <OWNER>/<REPO> --port 8080
+```
+
+### Option 2: Git Clone & Install
+
+```bash
+git clone https://github.com/<OWNER>/<REPO>.git
+cd <REPO>
+sudo bash install.sh
+```
+
+Once installed, open the WebGUI in your browser at:
+
+```text
+http://<node-ip>:8080
+```
+
+## Updating from GitHub
+
+```bash
+cd /opt/allstarlink-webgui
+sudo git pull
+sudo bash install.sh
+```
+
+## Uninstalling the WebGUI Service
+
+```bash
+sudo bash /opt/allstarlink-webgui/install.sh --uninstall
+```
+
+## What the Node Installer Configures
+
+- **AllStarLink 3 (`asl3`, `asl3-asterisk`, `asl3-menu`)**: Generates `/etc/asterisk/rpt.conf`, `iax.conf`, `extensions.conf`, `simpleusb.conf`, and `manager.conf` with clean operator-supplied node numbers and secrets.
+- **DVSwitch Server (`mmdvm-bridge`, `analog-bridge`, `md380-emu`)**: Optional private-node (`chan_usrp`) or direct USRP bridging to DMR, YSF, P25, NXDN, and D-Star networks.
+- **MMDVMHost (`g4klx/MMDVMHost`)**: Optional source build from GitHub with Raspberry Pi GPIO UART configuration (`/dev/ttyAMA0`), `/etc/mmdvm/MMDVM.ini`, `DMRIds.dat`, and `mmdvmhost.service`.
+- **On-Node HTML Dashboard & Security**: Deploys `asl-dashboard.service` along with optional Allmon3, Cockpit, UFW firewall rules, and Fail2Ban.
+
+## Local Development
+
+```bash
+npm install
+npm run dev
+```

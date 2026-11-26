@@ -5,9 +5,19 @@ export interface GeneratedFile {
   id: string;
   filename: string;
   targetPath: string;
-  language: 'ini' | 'bash' | 'html';
+  language: 'ini' | 'bash' | 'html' | 'markdown';
   description: string;
   content: string;
+}
+
+export function normalizeGitHubRepo(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  return trimmed
+    .replace(/^https?:\/\/github\.com\//i, '')
+    .replace(/^git@github\.com:/i, '')
+    .replace(/\.git$/i, '')
+    .replace(/^\/+|\/+$/g, '');
 }
 
 function getCourtesyToneConfig(preset: NodeConfiguration['allstar']['courtesyTone']): string {
@@ -1456,14 +1466,278 @@ export function getAllGeneratedFiles(config: NodeConfiguration): GeneratedFile[]
     });
   }
 
-  files.push({
-    id: 'dashboard-html',
-    filename: 'asl-dashboard.html',
-    targetPath: '/opt/asl-dashboard/index.html',
-    language: 'html',
-    description: 'Standalone HTML Node Dashboard & Configuration Page deployed onto the node',
-    content: generateStandaloneDashboardHtml(config),
-  });
+  files.push(
+    {
+      id: 'dashboard-html',
+      filename: 'asl-dashboard.html',
+      targetPath: '/opt/asl-dashboard/index.html',
+      language: 'html',
+      description: 'Standalone HTML Node Dashboard & Configuration Page deployed onto the node',
+      content: generateStandaloneDashboardHtml(config),
+    },
+    {
+      id: 'github-install-sh',
+      filename: 'install.sh',
+      targetPath: './install.sh',
+      language: 'bash',
+      description: 'GitHub repository bootstrapper that installs and serves this WebGUI via systemd',
+      content: generateGitHubBootstrapScript(config),
+    },
+    {
+      id: 'github-readme',
+      filename: 'README.md',
+      targetPath: './README.md',
+      language: 'markdown',
+      description: 'GitHub repository README with one-line curl and git clone installation steps',
+      content: generateGitHubReadme(config),
+    }
+  );
 
   return files;
 }
+
+export function generateGitHubBootstrapScript(config: NodeConfiguration): string {
+  const { platform } = config;
+  const repoSlug = normalizeGitHubRepo(platform.githubRepo) || '<OWNER>/<REPO>';
+  const branch = platform.githubBranch.trim() || 'main';
+  const port = platform.dashboardPort || 8080;
+
+  return `#!/usr/bin/env bash
+# ============================================================================
+# AllStarLink Guided Install WebGUI — GitHub Bootstrap Installer
+# Repository: https://github.com/${repoSlug} (${branch})
+# ============================================================================
+
+set -euo pipefail
+
+if [[ "\${EUID}" -ne 0 ]]; then
+  echo "[ERROR] Please run this installer as root: sudo bash $0 $*"
+  exit 1
+fi
+
+REPO_INPUT="\${ASL_WEBGUI_REPO:-${repoSlug === '<OWNER>/<REPO>' ? '' : repoSlug}}"
+BRANCH="\${ASL_WEBGUI_BRANCH:-${branch}}"
+INSTALL_DIR="\${ASL_WEBGUI_DIR:-/opt/allstarlink-webgui}"
+WEBGUI_PORT="\${ASL_WEBGUI_PORT:-${port}}"
+ACTION="install"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      REPO_INPUT="\${2:-}"
+      shift 2
+      ;;
+    --branch)
+      BRANCH="\${2:-${branch}}"
+      shift 2
+      ;;
+    --dir)
+      INSTALL_DIR="\${2:-/opt/allstarlink-webgui}"
+      shift 2
+      ;;
+    --port)
+      WEBGUI_PORT="\${2:-${port}}"
+      shift 2
+      ;;
+    --uninstall)
+      ACTION="uninstall"
+      shift
+      ;;
+    *)
+      echo "[ERROR] Unknown argument: $1"
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "\${ACTION}" == "uninstall" ]]; then
+  systemctl disable --now asl-webgui.service 2>/dev/null || true
+  rm -f /etc/systemd/system/asl-webgui.service
+  systemctl daemon-reload
+  rm -rf "\${INSTALL_DIR}"
+  echo "[INFO] Removed AllStarLink Guided Install WebGUI."
+  exit 0
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_SOURCE=0
+if [[ -f "\${SCRIPT_DIR}/package.json" && -d "\${SCRIPT_DIR}/.git" ]]; then
+  LOCAL_SOURCE=1
+  if [[ -z "\${REPO_INPUT}" ]]; then
+    REPO_INPUT="$(git -C "\${SCRIPT_DIR}" remote get-url origin 2>/dev/null || true)"
+  fi
+fi
+
+if [[ -n "\${REPO_INPUT}" ]]; then
+  if [[ "\${REPO_INPUT}" =~ ^https?:// ]] || [[ "\${REPO_INPUT}" =~ ^git@ ]]; then
+    REPO_URL="\${REPO_INPUT}"
+  else
+    REPO_URL="https://github.com/\${REPO_INPUT%.git}.git"
+  fi
+else
+  REPO_URL=""
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y --no-install-recommends git curl ca-certificates gnupg2 lsb-release python3
+
+NEED_NODE=0
+if ! command -v node >/dev/null 2>&1; then
+  NEED_NODE=1
+else
+  NODE_MAJOR="$(node -v | sed -E 's/^v([0-9]+).*/\\1/')"
+  if [[ "\${NODE_MAJOR}" -lt 20 ]]; then
+    NEED_NODE=1
+  fi
+fi
+
+if [[ "\${NEED_NODE}" -eq 1 ]]; then
+  mkdir -p /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \\
+    | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \\
+    > /etc/apt/sources.list.d/nodesource.list
+  apt-get update -y
+  apt-get install -y nodejs
+fi
+
+if [[ -n "\${REPO_URL}" ]]; then
+  if [[ -d "\${INSTALL_DIR}/.git" ]]; then
+    git -C "\${INSTALL_DIR}" fetch origin "\${BRANCH}"
+    git -C "\${INSTALL_DIR}" checkout "\${BRANCH}"
+    git -C "\${INSTALL_DIR}" pull --ff-only origin "\${BRANCH}"
+  else
+    rm -rf "\${INSTALL_DIR}"
+    git clone --branch "\${BRANCH}" --depth 1 "\${REPO_URL}" "\${INSTALL_DIR}"
+  fi
+elif [[ "\${LOCAL_SOURCE}" -eq 1 ]]; then
+  if [[ "\${SCRIPT_DIR}" != "\${INSTALL_DIR}" ]]; then
+    mkdir -p "\${INSTALL_DIR}"
+    cp -a "\${SCRIPT_DIR}/." "\${INSTALL_DIR}/"
+  fi
+else
+  echo "[ERROR] Provide --repo <owner>/<repo> or run inside a cloned repository."
+  exit 1
+fi
+
+cd "\${INSTALL_DIR}"
+if [[ -f "\${INSTALL_DIR}/package-lock.json" ]]; then
+  npm ci --no-audit --no-fund
+else
+  npm install --no-audit --no-fund
+fi
+npm run build
+
+cat <<'EOF_PY' > "\${INSTALL_DIR}/webgui-server.py"
+import http.server
+import json
+import os
+import socket
+import subprocess
+
+DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist")
+PORT = int(os.environ.get("ASL_WEBGUI_PORT", "${port}"))
+SERVICES = ["asterisk", "allmon3", "md380-emu", "analog_bridge", "mmdvm_bridge", "mmdvmhost"]
+
+class WebGuiHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=DIST_DIR, **kwargs)
+
+    def do_GET(self):
+        if self.path == "/api/status":
+            services = {}
+            for svc in SERVICES:
+                res = subprocess.run(["systemctl", "is-active", svc], capture_output=True, text=True)
+                services[svc] = res.stdout.strip() or "inactive"
+            payload = json.dumps({"hostname": socket.gethostname(), "services": services}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        if self.path == "/" or not os.path.exists(os.path.join(DIST_DIR, self.path.lstrip("/"))):
+            self.path = "/index.html"
+        return super().do_GET()
+
+if __name__ == "__main__":
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), WebGuiHandler)
+    server.serve_forever()
+EOF_PY
+
+cat <<EOF_SVC > /etc/systemd/system/asl-webgui.service
+[Unit]
+Description=AllStarLink Guided Install WebGUI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=ASL_WEBGUI_PORT=\${WEBGUI_PORT}
+WorkingDirectory=\${INSTALL_DIR}
+ExecStart=/usr/bin/python3 \${INSTALL_DIR}/webgui-server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF_SVC
+
+systemctl daemon-reload
+systemctl enable --now asl-webgui.service
+systemctl restart asl-webgui.service
+
+if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+  ufw allow "\${WEBGUI_PORT}/tcp" comment 'AllStarLink Guided Install WebGUI' || true
+fi
+
+NODE_IP="$(hostname -I | awk '{print $1}')"
+echo "WebGUI running at http://\${NODE_IP:-localhost}:\${WEBGUI_PORT}"
+`;
+}
+
+export function generateGitHubReadme(config: NodeConfiguration): string {
+  const { platform, dvswitch, mmdvmhost } = config;
+  const repoSlug = normalizeGitHubRepo(platform.githubRepo) || '<OWNER>/<REPO>';
+  const branch = platform.githubBranch.trim() || 'main';
+  const port = platform.dashboardPort || 8080;
+  const repoDir = repoSlug.includes('/') ? repoSlug.split('/')[1] : '<REPO>';
+
+  return `# AllStarLink Guided Install WebGUI
+
+Interactive Dashboard & Configuration Wizard for **AllStarLink 3 (ASL3)**${dvswitch.enabled ? ', **DVSwitch Server**' : ''}${mmdvmhost.enabled ? ', and **MMDVMHost**' : ''} on **Raspberry Pi OS** and **Debian 13 (Trixie)**.
+
+## GitHub Quick Install
+
+### One-Line Install
+
+\`\`\`bash
+curl -fsSL https://raw.githubusercontent.com/${repoSlug}/${branch}/install.sh | sudo bash -s -- --repo ${repoSlug} --port ${port}
+\`\`\`
+
+### Git Clone Install
+
+\`\`\`bash
+git clone -b ${branch} https://github.com/${repoSlug}.git
+cd ${repoDir}
+sudo bash install.sh --port ${port}
+\`\`\`
+
+Open the WebGUI in your browser:
+
+\`\`\`text
+http://<node-ip>:${port}
+\`\`\`
+
+## Update from GitHub
+
+\`\`\`bash
+cd /opt/allstarlink-webgui
+sudo git pull
+sudo bash install.sh --port ${port}
+\`\`\`
+`;
+}
+
