@@ -19,20 +19,25 @@ export function InstallGuideView({ config }: InstallGuideViewProps) {
     setTimeout(() => setCopiedStep(null), 1800);
   };
 
+  const sshUser = platform.createCustomUser && platform.adminUsername.trim() ? platform.adminUsername.trim() : 'root';
+
   const steps = [
     {
       id: 'os-prep',
       title: '01. Flash Fresh OS & Enable SSH',
       summary: platform.target.startsWith('rpi')
-        ? `Flash ${platformMeta?.label} using Raspberry Pi Imager. In Imager OS Customization, set username, Wi-Fi/Ethernet, and enable SSH.`
-        : `Install minimal ${platformMeta?.label} via netinst ISO or cloud image with OpenSSH Server enabled and root/sudo access.`,
+        ? `Flash ${platformMeta?.label} using Raspberry Pi Imager. Enable SSH in OS Customization${platform.configureWifi ? ` (the installer will also provision Wi-Fi SSID "${platform.wifiSsid || 'your network'}" for country ${platform.wifiCountry})` : ''}.`
+        : `Install minimal ${platformMeta?.label} via netinst ISO or cloud image with OpenSSH Server enabled and sudo/root access.`,
       cmd: 'sudo apt update && sudo apt upgrade -y && sudo reboot',
     },
     {
       id: 'transfer',
       title: '02. Upload & Run the Generated Installer',
-      summary: `Download ${scriptName} using the Download Installer button, copy it to your node, and execute it as root. Installation takes 5–12 minutes depending on DAHDI kernel header compilation.`,
-      cmd: `scp ${scriptName} root@<node-ip>:/root/\nssh root@<node-ip> "chmod +x /root/${scriptName} && bash /root/${scriptName}"`,
+      summary: `Download ${scriptName} using the Download Installer button, copy it to your node, and execute it with sudo/root. Installation takes 5–12 minutes depending on DAHDI kernel header compilation.`,
+      cmd:
+        sshUser === 'root'
+          ? `scp ${scriptName} root@<node-ip>:/root/\nssh root@<node-ip> "chmod +x /root/${scriptName} && bash /root/${scriptName}"`
+          : `scp ${scriptName} ${sshUser}@<node-ip>:~/\nssh -t ${sshUser}@<node-ip> "chmod +x ~/${scriptName} && sudo bash ~/${scriptName}"`,
     },
     {
       id: 'router',
@@ -49,8 +54,8 @@ export function InstallGuideView({ config }: InstallGuideViewProps) {
           : 'Confirm Asterisk registration and calibrate USB FOB audio deviation using simpleusb-tune-menu.',
       cmd:
         allstar.radioInterface === 'pseudo'
-          ? `sudo asterisk -rx "iax2 show registry"\nsudo asterisk -rx "rpt nodes ${allstar.nodeNumber}"`
-          : `sudo asterisk -rx "iax2 show registry"\nsudo asterisk -rx "rpt nodes ${allstar.nodeNumber}"\nsudo simpleusb-tune-menu`,
+          ? `sudo asterisk -rx "iax2 show registry"\nsudo asterisk -rx "rpt nodes ${allstar.nodeNumber || '<NODE>'}"`
+          : `sudo asterisk -rx "iax2 show registry"\nsudo asterisk -rx "rpt nodes ${allstar.nodeNumber || '<NODE>'}"\nsudo simpleusb-tune-menu`,
     },
     ...(dvswitch.enabled
       ? [
@@ -59,7 +64,7 @@ export function InstallGuideView({ config }: InstallGuideViewProps) {
             title: '05. Verify DVSwitch Bridge & Test Digital Mode',
             summary: `Confirm md380-emu, Analog_Bridge, and MMDVM_Bridge are running and linked to ${
               dvswitch.bridgeArch === 'private-node'
-                ? `private node ${dvswitch.privateNodeNumber}`
+                ? `private node ${dvswitch.privateNodeNumber || '<PRIVATE_NODE>'}`
                 : 'direct USRP'
             }.`,
             cmd: `sudo systemctl status md380-emu analog_bridge mmdvm_bridge\nsudo /opt/MMDVM_Bridge/dvswitch.sh mode ${dvswitch.defaultMode}\nsudo /opt/MMDVM_Bridge/dvswitch.sh tune ${dvswitch.dmrDefaultTg}`,
@@ -85,7 +90,7 @@ export function InstallGuideView({ config }: InstallGuideViewProps) {
           Fresh Node Deployment Runbook
         </h2>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Tailored for {platformMeta?.label} · Node {allstar.nodeNumber} ({allstar.callsign})
+          Tailored for {platformMeta?.label} · Node {allstar.nodeNumber || 'Unassigned'}{allstar.callsign ? ` (${allstar.callsign})` : ''}
         </p>
 
         <div className="mt-6 divide-y divide-slate-100 dark:divide-slate-800">

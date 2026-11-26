@@ -13,6 +13,7 @@ import {
   DMR_MASTER_PRESETS,
   PLATFORM_OPTIONS,
   TIMEZONES,
+  WIFI_COUNTRY_CODES,
 } from '../data/presets';
 import {
   DmrMasterPreset,
@@ -49,6 +50,8 @@ export function WizardForms({
   onStepChange,
   onSwitchView,
 }: WizardFormsProps) {
+  const [showAdminPass, setShowAdminPass] = useState(false);
+  const [showWifiPass, setShowWifiPass] = useState(false);
   const [showAslPass, setShowAslPass] = useState(false);
   const [showAmiPass, setShowAmiPass] = useState(false);
   const [showDmrPass, setShowDmrPass] = useState(false);
@@ -87,7 +90,6 @@ export function WizardForms({
       dmrMasterPreset: presetKey,
       dmrMasterHost: preset.host,
       dmrMasterPort: preset.port,
-      dmrMasterPassword: preset.defaultPass,
     });
   };
 
@@ -193,7 +195,7 @@ export function WizardForms({
                   value={config.platform.hostname}
                   onChange={(e) => updatePlatform({ hostname: e.target.value })}
                   className={inputCls}
-                  placeholder="asl-node-55001"
+                  placeholder="asl-node"
                 />
                 {fieldError('hostname') && (
                   <p className="mt-1 text-xs text-red-600 dark:text-red-400">
@@ -234,6 +236,200 @@ export function WizardForms({
                   className={`${inputCls} font-mono tabular-nums`}
                 />
               </div>
+            </div>
+
+            {/* Linux Admin User & SSH Setup */}
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    Node Admin User &amp; SSH Access
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Creates or updates a non-root sudo account with audio and dialout USB device permissions.
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={config.platform.createCustomUser}
+                    onChange={(e) => updatePlatform({ createCustomUser: e.target.checked })}
+                    className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                  />
+                  <span>Configure User</span>
+                </label>
+              </div>
+
+              {config.platform.createCustomUser && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="adminUsername" className={labelCls}>
+                        Admin Username
+                      </label>
+                      <input
+                        id="adminUsername"
+                        type="text"
+                        value={config.platform.adminUsername}
+                        onChange={(e) =>
+                          updatePlatform({
+                            adminUsername: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''),
+                          })
+                        }
+                        className={`${inputCls} font-mono`}
+                        placeholder="pi"
+                      />
+                      {fieldError('adminUsername') ? (
+                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                          {fieldError('adminUsername')?.message}
+                        </p>
+                      ) : (
+                        <p className={helpCls}>
+                          Added to sudo, audio, dialout, and plugdev groups.
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label htmlFor="adminPassword" className={labelCls}>
+                        User Password (Optional)
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="adminPassword"
+                          type={showAdminPass ? 'text' : 'password'}
+                          value={config.platform.adminPassword}
+                          onChange={(e) => updatePlatform({ adminPassword: e.target.value })}
+                          className={`${inputCls} pr-10 font-mono`}
+                          placeholder="Leave blank to keep existing password"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowAdminPass((v) => !v)}
+                          aria-label={showAdminPass ? 'Hide user password' : 'Show user password'}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400"
+                        >
+                          {showAdminPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="sshAuthorizedKey" className={labelCls}>
+                      SSH Public Key (authorized_keys, Optional)
+                    </label>
+                    <input
+                      id="sshAuthorizedKey"
+                      type="text"
+                      value={config.platform.sshAuthorizedKey}
+                      onChange={(e) => updatePlatform({ sshAuthorizedKey: e.target.value })}
+                      className={`${inputCls} font-mono text-xs`}
+                      placeholder="ssh-ed25519 AAAA... operator@workstation"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Raspberry Pi Wi-Fi Setup */}
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    Raspberry Pi Wi-Fi &amp; Regulatory Domain
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Provisions NetworkManager (nmcli) or wpa_supplicant on Raspberry Pi OS Bookworm / Trixie.
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={config.platform.configureWifi}
+                    onChange={(e) => updatePlatform({ configureWifi: e.target.checked })}
+                    className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                  />
+                  <span>Configure Wi-Fi</span>
+                </label>
+              </div>
+
+              {config.platform.configureWifi && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label htmlFor="wifiCountry" className={labelCls}>
+                        Wi-Fi Country Code
+                      </label>
+                      <select
+                        id="wifiCountry"
+                        value={config.platform.wifiCountry}
+                        onChange={(e) => updatePlatform({ wifiCountry: e.target.value })}
+                        className={inputCls}
+                      >
+                        {WIFI_COUNTRY_CODES.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label htmlFor="wifiSsid" className={labelCls}>
+                        Wi-Fi Network Name (SSID)
+                      </label>
+                      <input
+                        id="wifiSsid"
+                        type="text"
+                        value={config.platform.wifiSsid}
+                        onChange={(e) => updatePlatform({ wifiSsid: e.target.value })}
+                        className={inputCls}
+                        placeholder="Shack-WiFi"
+                      />
+                      {fieldError('wifiSsid') && (
+                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                          {fieldError('wifiSsid')?.message}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label htmlFor="wifiPassword" className={labelCls}>
+                        WPA2 / WPA3 Passphrase
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="wifiPassword"
+                          type={showWifiPass ? 'text' : 'password'}
+                          value={config.platform.wifiPassword}
+                          onChange={(e) => updatePlatform({ wifiPassword: e.target.value })}
+                          className={`${inputCls} pr-10 font-mono`}
+                          placeholder="Leave empty for open SSID"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowWifiPass((v) => !v)}
+                          aria-label={showWifiPass ? 'Hide Wi-Fi password' : 'Show Wi-Fi password'}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400"
+                        >
+                          {showWifiPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <label className="inline-flex items-center gap-2.5 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.platform.wifiHidden}
+                      onChange={(e) => updatePlatform({ wifiHidden: e.target.checked })}
+                      className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                    />
+                    <span>Hidden SSID (enable scan_ssid / 802-11-wireless.hidden)</span>
+                  </label>
+                </div>
+              )}
             </div>
 
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
@@ -330,7 +526,7 @@ export function WizardForms({
                     })
                   }
                   className={`${inputCls} font-mono tabular-nums`}
-                  placeholder="55001"
+                  placeholder="Enter 4-6 digit node #"
                 />
                 {fieldError('nodeNumber') ? (
                   <p className="mt-1 text-xs text-red-600 dark:text-red-400">
@@ -355,7 +551,7 @@ export function WizardForms({
                     })
                   }
                   className={`${inputCls} font-mono uppercase`}
-                  placeholder="W6ABC"
+                  placeholder="Enter callsign"
                 />
                 {fieldError('callsign') && (
                   <p className="mt-1 text-xs text-red-600 dark:text-red-400">
@@ -561,7 +757,7 @@ export function WizardForms({
                   value={config.allstar.cwIdString}
                   onChange={(e) => updateAllstar({ cwIdString: e.target.value.toUpperCase() })}
                   className={`${inputCls} font-mono`}
-                  placeholder="W6ABC/L"
+                  placeholder="Optional (defaults to callsign)"
                 />
               </div>
 
@@ -727,10 +923,10 @@ export function WizardForms({
                       className={inputCls}
                     >
                       <option value="private-node">
-                        Private Node Bridge (Recommended — e.g. 1999 linked to {config.allstar.nodeNumber})
+                        Private Node Bridge (Recommended — separate internal node linked to {config.allstar.nodeNumber || 'primary'})
                       </option>
                       <option value="direct-usrp">
-                        Direct USRP on Primary Node ({config.allstar.nodeNumber} dedicated to DVSwitch)
+                        Direct USRP on Primary Node ({config.allstar.nodeNumber || 'primary'} dedicated to DVSwitch)
                       </option>
                     </select>
                     <p className={helpCls}>
@@ -754,7 +950,7 @@ export function WizardForms({
                             })
                           }
                           className={`${inputCls} font-mono tabular-nums`}
-                          placeholder="1999"
+                          placeholder="e.g. 1999"
                         />
                         <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 whitespace-nowrap shrink-0 cursor-pointer">
                           <input
@@ -793,7 +989,7 @@ export function WizardForms({
                         })
                       }
                       className={`${inputCls} font-mono tabular-nums`}
-                      placeholder="3100001"
+                      placeholder="7-digit RadioID"
                     />
                     {fieldError('dmrId') && (
                       <p className="mt-1 text-xs text-red-600 dark:text-red-400">
@@ -1225,7 +1421,7 @@ export function WizardForms({
                 type="button"
                 onClick={() =>
                   downloadTextFile(
-                    `install-asl-${config.allstar.nodeNumber}.sh`,
+                    `install-asl-${config.allstar.nodeNumber || 'node'}.sh`,
                     generateInstallScript(config),
                     'text/x-shellscript'
                   )
@@ -1240,7 +1436,7 @@ export function WizardForms({
                 type="button"
                 onClick={() =>
                   downloadTextFile(
-                    `asl-dashboard-${config.allstar.nodeNumber}.html`,
+                    `asl-dashboard-${config.allstar.nodeNumber || 'node'}.html`,
                     generateStandaloneDashboardHtml(config),
                     'text/html'
                   )

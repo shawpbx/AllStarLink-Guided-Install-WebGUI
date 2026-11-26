@@ -27,7 +27,7 @@ import { ConfigFilesView } from './components/ConfigFilesView';
 import { InstallerView } from './components/InstallerView';
 import { InstallGuideView } from './components/InstallGuideView';
 
-const STORAGE_KEY = 'asl_dvswitch_wizard_config_v1';
+const STORAGE_KEY = 'asl_dvswitch_wizard_config_v2';
 
 const WIZARD_STEPS: { id: WizardStep; title: string; subtitle: string }[] = [
   { id: 1, title: '01. Target Platform', subtitle: 'Raspberry Pi or Debian 13' },
@@ -50,7 +50,13 @@ export default function App() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        return JSON.parse(saved) as NodeConfiguration;
+        const parsed = JSON.parse(saved) as Partial<NodeConfiguration>;
+        return {
+          platform: { ...DEFAULT_NODE_CONFIG.platform, ...(parsed.platform || {}) },
+          allstar: { ...DEFAULT_NODE_CONFIG.allstar, ...(parsed.allstar || {}) },
+          dvswitch: { ...DEFAULT_NODE_CONFIG.dvswitch, ...(parsed.dvswitch || {}) },
+          security: { ...DEFAULT_NODE_CONFIG.security, ...(parsed.security || {}) },
+        };
       }
     } catch {
       // Ignore malformed storage

@@ -160,6 +160,20 @@ export function NodeSummaryInspector({
             </dd>
           </div>
           <div className="flex justify-between gap-2">
+            <dt className="text-slate-500 dark:text-slate-400">Admin User</dt>
+            <dd className="font-mono text-slate-900 dark:text-slate-100">
+              {platform.createCustomUser ? platform.adminUsername || 'pi' : 'Default / root'}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-2">
+            <dt className="text-slate-500 dark:text-slate-400">Wi-Fi Setup</dt>
+            <dd className="font-mono text-slate-900 dark:text-slate-100">
+              {platform.configureWifi
+                ? `${platform.wifiSsid || 'Unset'} (${platform.wifiCountry})`
+                : 'Ethernet / Existing'}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-2">
             <dt className="text-slate-500 dark:text-slate-400">Firewall</dt>
             <dd className="font-mono text-slate-900 dark:text-slate-100">
               {security.enableUfw ? 'UFW Enabled' : 'Unconfigured'}

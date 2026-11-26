@@ -32,7 +32,7 @@ export function TopologyView({
             </p>
           </div>
           <span className="text-xs font-mono text-slate-600 dark:text-slate-400 tabular-nums">
-            Primary Node {allstar.nodeNumber} · IAX2 {allstar.iaxPort}/udp
+            Primary Node {allstar.nodeNumber || 'Unassigned'} · IAX2 {allstar.iaxPort}/udp
           </span>
         </div>
 
@@ -82,7 +82,7 @@ export function TopologyView({
                 <Server className="w-4 h-4 text-sky-700 dark:text-sky-400" aria-hidden="true" />
               </div>
               <h3 className="mt-2 text-base font-semibold text-slate-900 dark:text-slate-100">
-                Asterisk app_rpt ({allstar.nodeNumber})
+                Asterisk app_rpt ({allstar.nodeNumber || 'Unassigned'})
               </h3>
               <p className="mt-1.5 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
                 Registers with {allstar.registrationServer} on UDP port {allstar.iaxPort}. Exposes AMI on 127.0.0.1:5038 for Allmon3.
@@ -91,14 +91,14 @@ export function TopologyView({
             <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-1 text-xs font-mono text-slate-700 dark:text-slate-300">
               <div className="flex justify-between">
                 <span>Callsign ID</span>
-                <span>{allstar.callsign}</span>
+                <span>{allstar.callsign || '—'}</span>
               </div>
               <div className="flex justify-between">
                 <span>USRP Bridge</span>
                 <span>
                   {dvswitch.enabled
                     ? dvswitch.bridgeArch === 'private-node'
-                      ? `Private Node ${dvswitch.privateNodeNumber}`
+                      ? `Private Node ${dvswitch.privateNodeNumber || 'Unassigned'}`
                       : 'Direct USRP'
                     : 'Not Linked'}
                 </span>
@@ -128,7 +128,7 @@ export function TopologyView({
                 </p>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs font-mono text-slate-700 dark:text-slate-300">
-                <span>DMR ID {dvswitch.dmrId}{dvswitch.repeaterSuffix} · TG {dvswitch.dmrDefaultTg}</span>
+                <span>DMR ID {dvswitch.dmrId ? `${dvswitch.dmrId}${dvswitch.repeaterSuffix}` : 'Unassigned'} · TG {dvswitch.dmrDefaultTg}</span>
                 <span>Edit Step 3 →</span>
               </div>
             </button>

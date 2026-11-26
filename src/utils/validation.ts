@@ -37,6 +37,57 @@ export function validateNodeConfig(config: NodeConfiguration): ValidationIssue[]
     });
   }
 
+  if (config.platform.createCustomUser) {
+    const username = config.platform.adminUsername.trim();
+    if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(username) || username === 'root') {
+      issues.push({
+        id: 'admin-username-invalid',
+        severity: 'error',
+        step: 1,
+        field: 'adminUsername',
+        message: 'Admin username must be a valid non-root lowercase Linux username (e.g. pi or asladmin).',
+      });
+    }
+    if (
+      config.platform.sshAuthorizedKey.trim() &&
+      !/^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp\d+|sk-ssh-)/.test(
+        config.platform.sshAuthorizedKey.trim()
+      )
+    ) {
+      issues.push({
+        id: 'ssh-key-invalid',
+        severity: 'warning',
+        step: 1,
+        field: 'sshAuthorizedKey',
+        message: 'SSH public key should begin with ssh-ed25519, ssh-rsa, or ecdsa-sha2-*.',
+      });
+    }
+  }
+
+  if (config.platform.configureWifi) {
+    if (!config.platform.wifiSsid.trim()) {
+      issues.push({
+        id: 'wifi-ssid-required',
+        severity: 'error',
+        step: 1,
+        field: 'wifiSsid',
+        message: 'Wi-Fi SSID network name is required when Wi-Fi provisioning is enabled.',
+      });
+    }
+    if (
+      config.platform.wifiPassword.trim().length > 0 &&
+      config.platform.wifiPassword.trim().length < 8
+    ) {
+      issues.push({
+        id: 'wifi-psk-short',
+        severity: 'warning',
+        step: 1,
+        field: 'wifiPassword',
+        message: 'WPA2/WPA3 Wi-Fi passphrases are normally 8 to 63 characters.',
+      });
+    }
+  }
+
   // AllStarLink checks
   const nodeNum = config.allstar.nodeNumber.trim();
   if (!/^\d{4,6}$/.test(nodeNum)) {
@@ -82,7 +133,15 @@ export function validateNodeConfig(config: NodeConfiguration): ValidationIssue[]
     });
   }
 
-  if (config.allstar.amiSecret.trim().length < 8) {
+  if (!config.allstar.amiSecret.trim()) {
+    issues.push({
+      id: 'ami-secret-missing',
+      severity: 'error',
+      step: 2,
+      field: 'amiSecret',
+      message: 'Asterisk Manager (AMI) secret is required (use Generate for a secure random secret).',
+    });
+  } else if (config.allstar.amiSecret.trim().length < 8) {
     issues.push({
       id: 'ami-secret-weak',
       severity: 'warning',
@@ -102,7 +161,7 @@ export function validateNodeConfig(config: NodeConfiguration): ValidationIssue[]
           severity: 'error',
           step: 3,
           field: 'privateNodeNumber',
-          message: 'Private DVSwitch bridge node number must be 4 to 6 digits (commonly 1999).',
+          message: 'Private DVSwitch bridge node number must be 4 to 6 digits (e.g. 1999).',
         });
       } else if (priv === nodeNum) {
         issues.push({
@@ -121,7 +180,7 @@ export function validateNodeConfig(config: NodeConfiguration): ValidationIssue[]
         severity: 'error',
         step: 3,
         field: 'dmrId',
-        message: 'DMR / RadioID must be a 7-digit numeric CCS7 ID (e.g. 3101234).',
+        message: 'DMR / RadioID must be a 7-digit numeric CCS7 ID.',
       });
     }
 
@@ -158,6 +217,16 @@ export function validateNodeConfig(config: NodeConfiguration): ValidationIssue[]
         step: 3,
         field: 'dmrMasterHost',
         message: 'DMR Master Server hostname is required when DVSwitch is enabled.',
+      });
+    }
+
+    if (!config.dvswitch.dmrMasterPassword.trim()) {
+      issues.push({
+        id: 'dmr-master-password',
+        severity: 'warning',
+        step: 3,
+        field: 'dmrMasterPassword',
+        message: 'DMR Master hotspot security password is empty.',
       });
     }
   }

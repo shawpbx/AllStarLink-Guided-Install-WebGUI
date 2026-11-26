@@ -33,6 +33,15 @@ export interface PlatformConfig {
   hostname: string;
   timezone: string;
   sshPort: number;
+  createCustomUser: boolean;
+  adminUsername: string;
+  adminPassword: string;
+  sshAuthorizedKey: string;
+  configureWifi: boolean;
+  wifiCountry: string;
+  wifiSsid: string;
+  wifiPassword: string;
+  wifiHidden: boolean;
   enableZramSwap: boolean;
   installAllmon3: boolean;
   installCockpit: boolean;
