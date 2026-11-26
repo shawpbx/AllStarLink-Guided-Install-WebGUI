@@ -24,10 +24,11 @@ export function InstallerView({ config }: InstallerViewProps) {
   const readmeContent = useMemo(() => generateGitHubReadme(config), [config]);
 
   const nodeFilename = `install-asl-${config.allstar.nodeNumber || 'node'}.sh`;
-  const repoSlug = normalizeGitHubRepo(config.platform.githubRepo) || '<OWNER>/<REPO>';
+  const repoSlug =
+    normalizeGitHubRepo(config.platform.githubRepo) || 'shawpbx/AllStarLink-Guided-Install-WebGUI';
   const branch = config.platform.githubBranch.trim() || 'main';
   const port = config.platform.dashboardPort || 8080;
-  const repoDir = repoSlug.includes('/') ? repoSlug.split('/')[1] : '<REPO>';
+  const repoDir = repoSlug.includes('/') ? repoSlug.split('/')[1] : 'AllStarLink-Guided-Install-WebGUI';
 
   const curlCmd = `curl -fsSL https://raw.githubusercontent.com/${repoSlug}/${branch}/install.sh | sudo bash -s -- --repo ${repoSlug} --port ${port}`;
   const cloneCmd = `git clone -b ${branch} https://github.com/${repoSlug}.git && cd ${repoDir} && sudo bash install.sh --port ${port}`;

@@ -261,7 +261,7 @@ export function WizardForms({
                   value={config.platform.githubRepo}
                   onChange={(e) => updatePlatform({ githubRepo: e.target.value })}
                   className={`${inputCls} font-mono`}
-                  placeholder="owner/allstarlink-webgui"
+                  placeholder="shawpbx/AllStarLink-Guided-Install-WebGUI"
                 />
                 <p className={helpCls}>
                   Customizes the one-line curl / git clone install commands and generated install.sh bootstrapper.

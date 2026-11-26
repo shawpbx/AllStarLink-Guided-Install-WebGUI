@@ -106,7 +106,7 @@ export const DEFAULT_NODE_CONFIG: NodeConfiguration = {
     hostname: 'asl-node',
     timezone: 'UTC',
     sshPort: 22,
-    githubRepo: '',
+    githubRepo: 'shawpbx/AllStarLink-Guided-Install-WebGUI',
     githubBranch: 'main',
     enableZramSwap: true,
     installAllmon3: true,

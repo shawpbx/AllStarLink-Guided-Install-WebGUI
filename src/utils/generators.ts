@@ -1079,6 +1079,7 @@ echo "========================================================================"
 export DEBIAN_FRONTEND=noninteractive
 
 hostnamectl set-hostname "${platform.hostname.trim()}" || true
+grep -qE "[[:space:]]${platform.hostname.trim()}([[:space:]]|\$)" /etc/hosts || echo "127.0.1.1 ${platform.hostname.trim()}" >> /etc/hosts
 timedatectl set-timezone "${platform.timezone}" || true
 
 apt-get update -y
@@ -1498,7 +1499,8 @@ export function getAllGeneratedFiles(config: NodeConfiguration): GeneratedFile[]
 
 export function generateGitHubBootstrapScript(config: NodeConfiguration): string {
   const { platform } = config;
-  const repoSlug = normalizeGitHubRepo(platform.githubRepo) || '<OWNER>/<REPO>';
+  const repoSlug =
+    normalizeGitHubRepo(platform.githubRepo) || 'shawpbx/AllStarLink-Guided-Install-WebGUI';
   const branch = platform.githubBranch.trim() || 'main';
   const port = platform.dashboardPort || 8080;
 
@@ -1515,7 +1517,7 @@ if [[ "\${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-REPO_INPUT="\${ASL_WEBGUI_REPO:-${repoSlug === '<OWNER>/<REPO>' ? '' : repoSlug}}"
+REPO_INPUT="\${ASL_WEBGUI_REPO:-${repoSlug}}"
 BRANCH="\${ASL_WEBGUI_BRANCH:-${branch}}"
 INSTALL_DIR="\${ASL_WEBGUI_DIR:-/opt/allstarlink-webgui}"
 WEBGUI_PORT="\${ASL_WEBGUI_PORT:-${port}}"
@@ -1559,12 +1561,15 @@ if [[ "\${ACTION}" == "uninstall" ]]; then
   exit 0
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR=""
 LOCAL_SOURCE=0
-if [[ -f "\${SCRIPT_DIR}/package.json" && -d "\${SCRIPT_DIR}/.git" ]]; then
-  LOCAL_SOURCE=1
-  if [[ -z "\${REPO_INPUT}" ]]; then
-    REPO_INPUT="$(git -C "\${SCRIPT_DIR}" remote get-url origin 2>/dev/null || true)"
+if [[ -n "\${BASH_SOURCE[0]:-}" && -f "\${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "\${SCRIPT_DIR}/package.json" && -d "\${SCRIPT_DIR}/.git" ]]; then
+    LOCAL_SOURCE=1
+    if [[ -z "\${REPO_INPUT}" ]]; then
+      REPO_INPUT="$(git -C "\${SCRIPT_DIR}" remote get-url origin 2>/dev/null || true)"
+    fi
   fi
 fi
 
@@ -1623,9 +1628,9 @@ fi
 
 cd "\${INSTALL_DIR}"
 if [[ -f "\${INSTALL_DIR}/package-lock.json" ]]; then
-  npm ci --no-audit --no-fund
+  npm ci --no-audit --no-fund || npm install --no-audit --no-fund --legacy-peer-deps
 else
-  npm install --no-audit --no-fund
+  npm install --no-audit --no-fund || npm install --no-audit --no-fund --legacy-peer-deps
 fi
 npm run build
 
@@ -1700,10 +1705,11 @@ echo "WebGUI running at http://\${NODE_IP:-localhost}:\${WEBGUI_PORT}"
 
 export function generateGitHubReadme(config: NodeConfiguration): string {
   const { platform, dvswitch, mmdvmhost } = config;
-  const repoSlug = normalizeGitHubRepo(platform.githubRepo) || '<OWNER>/<REPO>';
+  const repoSlug =
+    normalizeGitHubRepo(platform.githubRepo) || 'shawpbx/AllStarLink-Guided-Install-WebGUI';
   const branch = platform.githubBranch.trim() || 'main';
   const port = platform.dashboardPort || 8080;
-  const repoDir = repoSlug.includes('/') ? repoSlug.split('/')[1] : '<REPO>';
+  const repoDir = repoSlug.includes('/') ? repoSlug.split('/')[1] : 'AllStarLink-Guided-Install-WebGUI';
 
   return `# AllStarLink Guided Install WebGUI
 

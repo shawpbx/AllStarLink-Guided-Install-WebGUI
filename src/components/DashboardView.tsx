@@ -43,9 +43,10 @@ export function DashboardView({
   const errors = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');
   const scriptName = `install-asl-${allstar.nodeNumber || 'node'}.sh`;
-  const repoSlug = normalizeGitHubRepo(platform.githubRepo) || '<OWNER>/<REPO>';
+  const repoSlug =
+    normalizeGitHubRepo(platform.githubRepo) || 'shawpbx/AllStarLink-Guided-Install-WebGUI';
   const branch = platform.githubBranch.trim() || 'main';
-  const repoDir = repoSlug.includes('/') ? repoSlug.split('/')[1] : '<REPO>';
+  const repoDir = repoSlug.includes('/') ? repoSlug.split('/')[1] : 'AllStarLink-Guided-Install-WebGUI';
 
   const openStep = (step: WizardStep) => {
     onJumpToStep(step);

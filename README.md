@@ -6,23 +6,21 @@ Interactive dashboard, configuration wizard, and automated node installer for **
 
 ### Option 1: One-Line GitHub Install
 
-Replace `<OWNER>/<REPO>` with your GitHub repository path:
-
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<OWNER>/<REPO>/main/install.sh | sudo bash -s -- --repo <OWNER>/<REPO>
+curl -fsSL https://raw.githubusercontent.com/shawpbx/AllStarLink-Guided-Install-WebGUI/main/install.sh | sudo bash
 ```
 
 Custom port example (`--port 8080`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<OWNER>/<REPO>/main/install.sh | sudo bash -s -- --repo <OWNER>/<REPO> --port 8080
+curl -fsSL https://raw.githubusercontent.com/shawpbx/AllStarLink-Guided-Install-WebGUI/main/install.sh | sudo bash -s -- --port 8080
 ```
 
 ### Option 2: Git Clone & Install
 
 ```bash
-git clone https://github.com/<OWNER>/<REPO>.git
-cd <REPO>
+git clone https://github.com/shawpbx/AllStarLink-Guided-Install-WebGUI.git
+cd AllStarLink-Guided-Install-WebGUI
 sudo bash install.sh
 ```
 

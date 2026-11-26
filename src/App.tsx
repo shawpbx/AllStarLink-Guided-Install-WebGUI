@@ -52,7 +52,12 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved) as Partial<NodeConfiguration>;
         return {
-          platform: { ...DEFAULT_NODE_CONFIG.platform, ...(parsed.platform || {}) },
+          platform: {
+            ...DEFAULT_NODE_CONFIG.platform,
+            ...(parsed.platform || {}),
+            githubRepo:
+              parsed.platform?.githubRepo || DEFAULT_NODE_CONFIG.platform.githubRepo,
+          },
           allstar: { ...DEFAULT_NODE_CONFIG.allstar, ...(parsed.allstar || {}) },
           dvswitch: { ...DEFAULT_NODE_CONFIG.dvswitch, ...(parsed.dvswitch || {}) },
           mmdvmhost: { ...DEFAULT_NODE_CONFIG.mmdvmhost, ...(parsed.mmdvmhost || {}) },

@@ -3,8 +3,8 @@
 # AllStarLink Guided Install WebGUI — GitHub Bootstrap Installer
 # Targets: Raspberry Pi OS (Bookworm / Trixie 64-bit) & Debian 13 (Trixie)
 # Usage:
-#   git clone https://github.com/<OWNER>/<REPO>.git && cd <REPO> && sudo bash install.sh
-#   curl -fsSL https://raw.githubusercontent.com/<OWNER>/<REPO>/main/install.sh | sudo bash -s -- --repo <OWNER>/<REPO>
+#   git clone https://github.com/shawpbx/AllStarLink-Guided-Install-WebGUI.git && cd AllStarLink-Guided-Install-WebGUI && sudo bash install.sh
+#   curl -fsSL https://raw.githubusercontent.com/shawpbx/AllStarLink-Guided-Install-WebGUI/main/install.sh | sudo bash
 # ============================================================================
 
 set -euo pipefail
@@ -14,7 +14,7 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-REPO_INPUT="${ASL_WEBGUI_REPO:-}"
+REPO_INPUT="${ASL_WEBGUI_REPO:-shawpbx/AllStarLink-Guided-Install-WebGUI}"
 BRANCH="${ASL_WEBGUI_BRANCH:-main}"
 INSTALL_DIR="${ASL_WEBGUI_DIR:-/opt/allstarlink-webgui}"
 WEBGUI_PORT="${ASL_WEBGUI_PORT:-8080}"
@@ -73,12 +73,15 @@ if [[ "${ACTION}" == "uninstall" ]]; then
 fi
 
 # Detect local git repository if executed inside a checked-out clone
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR=""
 LOCAL_SOURCE=0
-if [[ -f "${SCRIPT_DIR}/package.json" && -d "${SCRIPT_DIR}/.git" ]]; then
-  LOCAL_SOURCE=1
-  if [[ -z "${REPO_INPUT}" ]]; then
-    REPO_INPUT="$(git -C "${SCRIPT_DIR}" remote get-url origin 2>/dev/null || true)"
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "${SCRIPT_DIR}/package.json" && -d "${SCRIPT_DIR}/.git" ]]; then
+    LOCAL_SOURCE=1
+    if [[ -z "${REPO_INPUT}" ]]; then
+      REPO_INPUT="$(git -C "${SCRIPT_DIR}" remote get-url origin 2>/dev/null || true)"
+    fi
   fi
 fi
 
@@ -150,9 +153,9 @@ fi
 echo "[INFO] Installing npm dependencies and building WebGUI..."
 cd "${INSTALL_DIR}"
 if [[ -f "${INSTALL_DIR}/package-lock.json" ]]; then
-  npm ci --no-audit --no-fund
+  npm ci --no-audit --no-fund || npm install --no-audit --no-fund --legacy-peer-deps
 else
-  npm install --no-audit --no-fund
+  npm install --no-audit --no-fund || npm install --no-audit --no-fund --legacy-peer-deps
 fi
 npm run build
 
