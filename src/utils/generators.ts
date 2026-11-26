@@ -1112,26 +1112,37 @@ echo "[INFO] Configuring official AllStarLink 3 APT repository..."
 CODENAME="$(. /etc/os-release && echo "\${VERSION_CODENAME:-bookworm}")"
 echo "[INFO] Detected OS codename: \${CODENAME}"
 
-curl -fsSL "https://repo.allstarlink.org/public/asl-apt-repos.deb" -o /tmp/asl-apt-repos.deb
-dpkg -i /tmp/asl-apt-repos.deb || apt-get -f install -y
-rm -f /tmp/asl-apt-repos.deb
-
-if ! apt-get update -y || ! apt-cache show asl3 >/dev/null 2>&1; then
-  if [[ "\${CODENAME}" != "bookworm" ]]; then
-    echo "[WARN] AllStarLink repo did not expose 'asl3' for '\${CODENAME}'; pinning bookworm suite compatibility..."
-    find /etc/apt/sources.list.d/ -name "*allstar*" -exec sed -i "s/\${CODENAME}/bookworm/g" {} +
-    apt-get update -y
+if dpkg -s asl3 >/dev/null 2>&1; then
+  echo "[INFO] ASL3 is already installed (e.g. official ASL3 Raspberry Pi Appliance); updating package index..."
+  apt-get update -y || true
+else
+  if [[ "\${CODENAME}" == "trixie" ]]; then
+    ASL_REPO_DEB="asl-apt-repos.deb13_all.deb"
+  else
+    ASL_REPO_DEB="asl-apt-repos.deb12_all.deb"
   fi
+  echo "[INFO] Downloading https://repo.allstarlink.org/public/\${ASL_REPO_DEB}..."
+  curl -fsSL "https://repo.allstarlink.org/public/\${ASL_REPO_DEB}" -o "/tmp/\${ASL_REPO_DEB}"
+  dpkg -i "/tmp/\${ASL_REPO_DEB}" || apt-get -f install -y
+  rm -f "/tmp/\${ASL_REPO_DEB}"
+
+  if ! apt-get update -y || ! apt-cache show asl3 >/dev/null 2>&1; then
+    if [[ "\${CODENAME}" != "bookworm" ]]; then
+      echo "[WARN] AllStarLink repo did not expose 'asl3' for '\${CODENAME}'; pinning bookworm suite compatibility..."
+      find /etc/apt/sources.list.d/ -name "*allstar*" -exec sed -i "s/\${CODENAME}/bookworm/g" {} +
+      apt-get update -y
+    fi
+  fi
+
+  echo "[INFO] Installing ASL3 core packages..."
+  ASL_PKGS=(asl3)
+  for pkg in asl3-asterisk asl3-menu; do
+    if apt-cache show "\${pkg}" >/dev/null 2>&1; then
+      ASL_PKGS+=("\${pkg}")
+    fi
+  done
+  apt-get install -y "\${ASL_PKGS[@]}"
 fi
-
-echo "[INFO] Installing ASL3 core packages..."
-ASL_PKGS=(asl3)
-for pkg in asl3-asterisk asl3-menu; do
-  if apt-cache show "\${pkg}" >/dev/null 2>&1; then
-    ASL_PKGS+=("\${pkg}")
-  fi
-done
-apt-get install -y "\${ASL_PKGS[@]}"
 
 ${platform.installAllmon3 ? `echo "[INFO] Installing Allmon3 Web Monitor..."
 apt-get install -y allmon3 || echo "[WARN] allmon3 package unavailable in current suite."` : '# Allmon3 skipped per configuration'}
@@ -1711,6 +1722,15 @@ Open the WebGUI in your browser:
 \`\`\`text
 http://<node-ip>:${port}
 \`\`\`
+
+## Official Raspberry Pi ASL3 Appliance Image
+
+To flash a fresh SD card with the official **AllStarLink 3 (Trixie)** Raspberry Pi Appliance first:
+
+1. Open **Raspberry Pi Imager** → **App Options** → **Content Repository** → **Use custom URL**.
+2. Paste \`https://rpi.allstarlink.org/latest.json\` and click **Apply & Restart**.
+3. Select your Raspberry Pi (Pi 5 / Pi 4 / Pi 3 / Zero 2 W) and flash **AllStarLink (Trixie)**.
+4. Boot the Pi and run the GitHub quick install command above to configure ASL3${dvswitch.enabled ? ', DVSwitch Server' : ''}${mmdvmhost.enabled ? ', and MMDVMHost' : ''} from the WebGUI.
 
 ## Update from GitHub
 

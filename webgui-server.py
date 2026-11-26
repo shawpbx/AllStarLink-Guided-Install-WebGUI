@@ -1264,31 +1264,41 @@ def _run_install_worker(cfg: dict) -> None:
         _set_step(2, "Download & Install AllStarLink 3 (ASL3)")
         codename = _detect_codename()
         _append_log(f"[INFO] Detected OS codename: {codename}")
-        _run_cmd(["curl", "-fsSL", "https://repo.allstarlink.org/public/asl-apt-repos.deb", "-o", "/tmp/asl-apt-repos.deb"])
-        if _run_cmd(["dpkg", "-i", "/tmp/asl-apt-repos.deb"], check=False) != 0:
-            _run_cmd(["apt-get", "-f", "install", "-y"])
-        try:
-            os.remove("/tmp/asl-apt-repos.deb")
-        except OSError:
-            pass
 
-        update_rc = _run_cmd(["apt-get", "update", "-y"], check=False)
-        has_asl3 = _run_cmd(["apt-cache", "show", "asl3"], check=False) == 0
-        if (update_rc != 0 or not has_asl3) and codename != "bookworm":
-            _append_log(f"[WARN] AllStarLink APT repo did not expose 'asl3' for '{codename}'; falling back to bookworm suite...")
-            for list_file in Path("/etc/apt/sources.list.d").glob("*allstar*"):
-                try:
-                    txt = list_file.read_text(encoding="utf-8")
-                    list_file.write_text(txt.replace(codename, "bookworm"), encoding="utf-8")
-                except OSError:
-                    pass
-            _run_cmd(["apt-get", "update", "-y"])
+        asl3_installed = _run_cmd(["dpkg", "-s", "asl3"], check=False) == 0
+        if asl3_installed:
+            _append_log("[INFO] ASL3 is already installed (e.g. official ASL3 Raspberry Pi Appliance); updating package index...")
+            _run_cmd(["apt-get", "update", "-y"], check=False)
+        else:
+            deb_name = "asl-apt-repos.deb13_all.deb" if codename == "trixie" else "asl-apt-repos.deb12_all.deb"
+            repo_url = f"https://repo.allstarlink.org/public/{deb_name}"
+            _append_log(f"[INFO] Downloading official AllStarLink repository package: {repo_url}")
+            _run_cmd(["curl", "-fsSL", repo_url, "-o", f"/tmp/{deb_name}"])
+            if _run_cmd(["dpkg", "-i", f"/tmp/{deb_name}"], check=False) != 0:
+                _run_cmd(["apt-get", "-f", "install", "-y"])
+            try:
+                os.remove(f"/tmp/{deb_name}")
+            except OSError:
+                pass
 
-        asl_pkgs = ["asl3"]
-        for extra_pkg in ("asl3-asterisk", "asl3-menu"):
-            if _run_cmd(["apt-cache", "show", extra_pkg], check=False) == 0:
-                asl_pkgs.append(extra_pkg)
-        _run_cmd(["apt-get", "install", "-y", *asl_pkgs])
+            update_rc = _run_cmd(["apt-get", "update", "-y"], check=False)
+            has_asl3 = _run_cmd(["apt-cache", "show", "asl3"], check=False) == 0
+            if (update_rc != 0 or not has_asl3) and codename != "bookworm":
+                _append_log(f"[WARN] AllStarLink APT repo did not expose 'asl3' for '{codename}'; falling back to bookworm suite...")
+                for list_file in Path("/etc/apt/sources.list.d").glob("*allstar*"):
+                    try:
+                        txt = list_file.read_text(encoding="utf-8")
+                        list_file.write_text(txt.replace(codename, "bookworm"), encoding="utf-8")
+                    except OSError:
+                        pass
+                _run_cmd(["apt-get", "update", "-y"])
+
+            asl_pkgs = ["asl3"]
+            for extra_pkg in ("asl3-asterisk", "asl3-menu"):
+                if _run_cmd(["apt-cache", "show", extra_pkg], check=False) == 0:
+                    asl_pkgs.append(extra_pkg)
+            _run_cmd(["apt-get", "install", "-y", *asl_pkgs])
+
         if p["installAllmon3"]:
             _run_cmd(["apt-get", "install", "-y", "allmon3"], check=False)
         if p["installCockpit"]:

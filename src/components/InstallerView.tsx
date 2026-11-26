@@ -226,6 +226,40 @@ export function InstallerView({
         </div>
       </div>
 
+      {/* Official Raspberry Pi ASL3 Appliance Manifest */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 space-y-3">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+              Official AllStarLink 3 Raspberry Pi Appliance (Raspberry Pi Imager)
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Flash a fresh SD card with the official ASL3 (Debian 13 Trixie) image via Raspberry Pi Imager → App Options → Content Repository → Use custom URL, then run the WebGUI installer on top to configure your node, DVSwitch, and MMDVMHost.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => handleCopy('rpi-manifest', 'https://rpi.allstarlink.org/latest.json')}
+            className="min-h-[36px] px-3 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap"
+          >
+            {copiedKey === 'rpi-manifest' ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-600" aria-hidden="true" />
+                Copied URL
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                Copy Imager URL
+              </>
+            )}
+          </button>
+        </div>
+        <pre className="p-2.5 rounded bg-slate-950 text-slate-100 text-xs font-mono overflow-x-auto">
+          https://rpi.allstarlink.org/latest.json
+        </pre>
+      </div>
+
       {/* Script / Document Source Viewer */}
       <div className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden">
         <div className="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between text-xs font-mono text-slate-400">

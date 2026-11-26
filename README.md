@@ -39,6 +39,15 @@ When running the WebGUI directly on your Raspberry Pi or Debian 13 node:
 3. On first use, set a local admin password (stored as a salted scrypt hash in `/etc/allstarlink-webgui/admin.hash`, or override via `ASL_WEBGUI_ADMIN_PASSWORD`).
 4. Click **Run Install Now** to execute the full installation directly on the node with live progress and log streaming—no script download or `scp` required.
 
+## Official Raspberry Pi ASL3 Appliance Image
+
+If starting from a blank SD card on Raspberry Pi 5, 4, 3, or Zero 2 W, you can flash the official **AllStarLink 3 (Trixie)** appliance image first:
+
+1. Open **Raspberry Pi Imager** → **App Options** → **Content Repository** → **Use custom URL**.
+2. Enter `https://rpi.allstarlink.org/latest.json` and click **Apply & Restart**.
+3. Select your Raspberry Pi model and flash **AllStarLink (Trixie)**.
+4. Boot the Pi, run the GitHub one-line install above, and use **Install on This Node** (existing ASL3 packages are detected automatically while writing your node configs and installing optional DVSwitch / MMDVMHost).
+
 ## Updating from GitHub
 
 ```bash
