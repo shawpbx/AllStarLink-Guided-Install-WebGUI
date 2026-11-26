@@ -1352,7 +1352,10 @@ def _run_install_worker(cfg: dict) -> None:
         # 5. MMDVMHost
         if m["enabled"]:
             _set_step(5, "Build & Configure MMDVMHost RF Modem")
-            _run_cmd(["apt-get", "install", "-y", "--no-install-recommends", "libsamplerate0-dev"], check=False)
+            _run_cmd([
+                "apt-get", "install", "-y", "--no-install-recommends",
+                "nlohmann-json3-dev", "libmosquitto-dev", "libsamplerate0-dev",
+            ])
             if is_rpi and m["configurePiUart"] and shutil.which("raspi-config"):
                 _run_cmd(["raspi-config", "nonint", "do_serial_hw", "0"], check=False)
                 _run_cmd(["raspi-config", "nonint", "do_serial_cons", "1"], check=False)
@@ -1363,8 +1366,10 @@ def _run_install_worker(cfg: dict) -> None:
             _run_cmd(["git", "clone", "--depth", "1", "https://github.com/g4klx/MMDVMHost.git", src_dir])
             nproc = str(os.cpu_count() or 2)
             _run_cmd(["make", "-C", src_dir, f"-j{nproc}"])
-            _run_cmd(["install", "-m", "0755", f"{src_dir}/MMDVMHost", "/usr/local/bin/MMDVMHost"])
+            built_bin = f"{src_dir}/MMDVM-Host" if os.path.isfile(f"{src_dir}/MMDVM-Host") else f"{src_dir}/MMDVMHost"
+            _run_cmd(["install", "-m", "0755", built_bin, "/usr/local/bin/MMDVMHost"])
             os.makedirs("/etc/mmdvm", exist_ok=True)
+            os.makedirs("/var/log/mmdvm", exist_ok=True)
             _run_cmd(["curl", "-fsSL", "https://radioid.net/static/user.csv", "-o", "/etc/mmdvm/DMRIds.dat"], check=False)
             _write_mmdvmhost_config(cfg)
             _run_cmd(["systemctl", "daemon-reload"])

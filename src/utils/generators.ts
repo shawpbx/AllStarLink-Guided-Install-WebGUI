@@ -1249,7 +1249,7 @@ ${mmdvmhost.enabled ? `# -------------------------------------------------------
 # 5. Download, Build & Install MMDVMHost (RF Modem Host)
 # ----------------------------------------------------------------------------
 echo "[INFO] Installing MMDVMHost build dependencies and cloning g4klx/MMDVMHost..."
-apt-get install -y --no-install-recommends libsamplerate0-dev || true
+apt-get install -y --no-install-recommends nlohmann-json3-dev libmosquitto-dev libsamplerate0-dev
 
 ${isRpi && mmdvmhost.configurePiUart ? `# Enable Raspberry Pi GPIO UART for MMDVM_HS Hat (/dev/ttyAMA0)
 if command -v raspi-config >/dev/null 2>&1; then
@@ -1260,7 +1260,11 @@ fi` : '# Pi UART setup skipped'}
 rm -rf /usr/local/src/MMDVMHost
 git clone --depth 1 https://github.com/g4klx/MMDVMHost.git /usr/local/src/MMDVMHost
 make -C /usr/local/src/MMDVMHost -j"$(nproc)"
-install -m 0755 /usr/local/src/MMDVMHost/MMDVMHost /usr/local/bin/MMDVMHost
+if [[ -f /usr/local/src/MMDVMHost/MMDVM-Host ]]; then
+  install -m 0755 /usr/local/src/MMDVMHost/MMDVM-Host /usr/local/bin/MMDVMHost
+else
+  install -m 0755 /usr/local/src/MMDVMHost/MMDVMHost /usr/local/bin/MMDVMHost
+fi
 
 mkdir -p /etc/mmdvm /var/log/mmdvm
 curl -fsSL "https://radioid.net/static/user.csv" -o /etc/mmdvm/DMRIds.dat || true
