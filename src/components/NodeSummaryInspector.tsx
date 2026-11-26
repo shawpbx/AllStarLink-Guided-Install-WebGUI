@@ -15,7 +15,7 @@ export function NodeSummaryInspector({
   onJumpToStep,
   onSwitchView,
 }: NodeSummaryInspectorProps) {
-  const { platform, allstar, dvswitch, security } = config;
+  const { platform, allstar, dvswitch, mmdvmhost, security } = config;
   const platformMeta = PLATFORM_OPTIONS.find((p) => p.id === platform.target);
   const errors = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');
@@ -36,7 +36,7 @@ export function NodeSummaryInspector({
     activePorts.push({
       port: String(platform.dashboardPort),
       proto: 'TCP',
-      service: 'Local HTML Wizard',
+      service: 'On-Node HTML Dashboard',
       exposure: platform.dashboardBindAll ? '0.0.0.0 (LAN)' : '127.0.0.1 Localhost',
     });
   }
@@ -57,10 +57,26 @@ export function NodeSummaryInspector({
       {
         port: String(dvswitch.dmrMasterPort),
         proto: 'UDP',
-        service: 'DMR Master Link',
+        service: 'DVSwitch DMR Master',
         exposure: 'Outbound / Master',
       }
     );
+  }
+  if (mmdvmhost.enabled) {
+    activePorts.push({
+      port: mmdvmhost.modemPort,
+      proto: 'UART',
+      service: 'MMDVMHost Modem',
+      exposure: `${mmdvmhost.modemBaud} baud`,
+    });
+    if (mmdvmhost.dmrEnable) {
+      activePorts.push({
+        port: String(mmdvmhost.dmrMasterPort),
+        proto: 'UDP',
+        service: 'MMDVMHost DMR Master',
+        exposure: 'Outbound / Master',
+      });
+    }
   }
 
   return (
@@ -91,7 +107,7 @@ export function NodeSummaryInspector({
 
         {issues.length === 0 ? (
           <p className="mt-3 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-            All platform, AllStarLink, and {dvswitch.enabled ? 'DVSwitch bridge' : 'node'} parameters pass conflict and syntax checks.
+            All platform, AllStarLink{dvswitch.enabled ? ', DVSwitch' : ''}{mmdvmhost.enabled ? ', and MMDVMHost' : ''} parameters pass conflict and syntax checks.
           </p>
         ) : (
           <ul className="mt-3 space-y-2">
@@ -154,23 +170,15 @@ export function NodeSummaryInspector({
             <dd className="font-mono text-slate-900 dark:text-slate-100">
               {dvswitch.enabled
                 ? dvswitch.bridgeArch === 'private-node'
-                  ? `Node ${dvswitch.privateNodeNumber} (${dvswitch.defaultMode})`
+                  ? `Node ${dvswitch.privateNodeNumber || '—'} (${dvswitch.defaultMode})`
                   : `Direct USRP (${dvswitch.defaultMode})`
                 : 'Disabled'}
             </dd>
           </div>
           <div className="flex justify-between gap-2">
-            <dt className="text-slate-500 dark:text-slate-400">Admin User</dt>
+            <dt className="text-slate-500 dark:text-slate-400">MMDVMHost</dt>
             <dd className="font-mono text-slate-900 dark:text-slate-100">
-              {platform.createCustomUser ? platform.adminUsername || 'pi' : 'Default / root'}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-2">
-            <dt className="text-slate-500 dark:text-slate-400">Wi-Fi Setup</dt>
-            <dd className="font-mono text-slate-900 dark:text-slate-100">
-              {platform.configureWifi
-                ? `${platform.wifiSsid || 'Unset'} (${platform.wifiCountry})`
-                : 'Ethernet / Existing'}
+              {mmdvmhost.enabled ? mmdvmhost.modemPort : 'Disabled'}
             </dd>
           </div>
           <div className="flex justify-between gap-2">

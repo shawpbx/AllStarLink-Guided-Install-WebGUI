@@ -12,11 +12,11 @@ export function TopologyView({
   onEditStep,
   onSwitchView,
 }: TopologyViewProps) {
-  const { platform, allstar, dvswitch } = config;
+  const { platform, allstar, dvswitch, mmdvmhost } = config;
 
   const jumpTo = (step: WizardStep) => {
     onEditStep(step);
-    onSwitchView('wizard');
+    onSwitchView('configure');
   };
 
   return (
@@ -37,7 +37,7 @@ export function TopologyView({
         </div>
 
         {/* Visual Signal Chain */}
-        <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
+        <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-5 items-stretch">
           {/* Column 1: RF / Audio Input */}
           <button
             type="button"
@@ -106,7 +106,7 @@ export function TopologyView({
             </div>
           </button>
 
-          {/* Column 3: DVSwitch or AllStar Network */}
+          {/* Column 3: DVSwitch */}
           {dvswitch.enabled ? (
             <button
               type="button"
@@ -116,7 +116,7 @@ export function TopologyView({
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-sky-700 dark:text-sky-400">
-                    03. DVSwitch Transcode Chain
+                    03. DVSwitch Transcode
                   </span>
                   <Cpu className="w-4 h-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
                 </div>
@@ -128,7 +128,7 @@ export function TopologyView({
                 </p>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs font-mono text-slate-700 dark:text-slate-300">
-                <span>DMR ID {dvswitch.dmrId ? `${dvswitch.dmrId}${dvswitch.repeaterSuffix}` : 'Unassigned'} · TG {dvswitch.dmrDefaultTg}</span>
+                <span>DMR ID {dvswitch.dmrId ? `${dvswitch.dmrId}${dvswitch.repeaterSuffix}` : 'Unassigned'}</span>
                 <span>Edit Step 3 →</span>
               </div>
             </button>
@@ -140,13 +140,62 @@ export function TopologyView({
             >
               <div>
                 <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  03. Digital Voice Bridge
+                  03. DVSwitch Bridge
                 </span>
                 <h3 className="mt-2 text-base font-semibold text-slate-900 dark:text-slate-100">
-                  DVSwitch Server Disabled
+                  DVSwitch Disabled
                 </h3>
                 <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
                   Click to enable DMR, YSF, P25, NXDN, and D-Star bridging via DVSwitch.
+                </p>
+              </div>
+              <span className="mt-4 text-xs font-medium text-sky-700 dark:text-sky-400">
+                Enable in Step 3 →
+              </span>
+            </button>
+          )}
+
+          {/* Column 4: MMDVMHost */}
+          {mmdvmhost.enabled ? (
+            <button
+              type="button"
+              onClick={() => jumpTo(3)}
+              className="text-left p-5 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-sky-600 dark:hover:border-sky-500 transition-colors flex flex-col justify-between bg-slate-50/50 dark:bg-slate-950/40"
+            >
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-sky-700 dark:text-sky-400">
+                    04. MMDVMHost RF Modem
+                  </span>
+                  <Radio className="w-4 h-4 text-slate-500 dark:text-slate-400" aria-hidden="true" />
+                </div>
+                <h3 className="mt-2 text-base font-semibold text-slate-900 dark:text-slate-100">
+                  {mmdvmhost.modemPort} ({mmdvmhost.duplex ? 'Duplex' : 'Simplex'})
+                </h3>
+                <p className="mt-1.5 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                  RX {mmdvmhost.rxFrequencyHz || 'Unset'} Hz / TX {mmdvmhost.txFrequencyHz || 'Unset'} Hz · {mmdvmhost.dmrMasterHost}:{mmdvmhost.dmrMasterPort}
+                </p>
+              </div>
+              <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs font-mono text-slate-700 dark:text-slate-300">
+                <span>ID {mmdvmhost.dmrId ? `${mmdvmhost.dmrId}${mmdvmhost.repeaterSuffix}` : 'Unassigned'}</span>
+                <span>Edit Step 3 →</span>
+              </div>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => jumpTo(3)}
+              className="text-left p-5 rounded-lg border border-dashed border-slate-300 dark:border-slate-700 hover:border-sky-600 transition-colors flex flex-col justify-between"
+            >
+              <div>
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  04. MMDVMHost RF Modem
+                </span>
+                <h3 className="mt-2 text-base font-semibold text-slate-900 dark:text-slate-100">
+                  MMDVMHost Disabled
+                </h3>
+                <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+                  Click to configure a GPIO MMDVM_HS Hat or USB MMDVM modem with MMDVM.ini.
                 </p>
               </div>
               <span className="mt-4 text-xs font-medium text-sky-700 dark:text-sky-400">
@@ -172,7 +221,7 @@ export function TopologyView({
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                   {[
                     platform.installLocalDashboard
-                      ? `Local HTML Dashboard (:${platform.dashboardPort})`
+                      ? `On-Node HTML Dashboard (:${platform.dashboardPort})`
                       : null,
                     platform.installAllmon3 ? 'Allmon3 (:80)' : null,
                     platform.installCockpit ? 'Cockpit (:9090)' : null,

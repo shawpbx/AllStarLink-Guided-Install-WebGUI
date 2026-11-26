@@ -28,20 +28,15 @@ export type DmrMasterPreset =
   | 'freedmr'
   | 'custom';
 
+export type MmdvmModemPort = '/dev/ttyAMA0' | '/dev/ttyUSB0' | '/dev/ttyACM0' | 'custom';
+
+export type MmdvmDisplayType = 'None' | 'OLED' | 'Nextion' | 'HD44780';
+
 export interface PlatformConfig {
   target: TargetPlatform;
   hostname: string;
   timezone: string;
   sshPort: number;
-  createCustomUser: boolean;
-  adminUsername: string;
-  adminPassword: string;
-  sshAuthorizedKey: string;
-  configureWifi: boolean;
-  wifiCountry: string;
-  wifiSsid: string;
-  wifiPassword: string;
-  wifiHidden: boolean;
   enableZramSwap: boolean;
   installAllmon3: boolean;
   installCockpit: boolean;
@@ -110,6 +105,37 @@ export interface DvSwitchConfig {
   dstarModule: 'A' | 'B' | 'C';
 }
 
+export interface MmdvmHostConfig {
+  enabled: boolean;
+  dmrId: string;
+  repeaterSuffix: string;
+  duplex: boolean;
+  rxFrequencyHz: string;
+  txFrequencyHz: string;
+  rfPower: number;
+  modemPort: string;
+  modemBaud: 115200 | 230400 | 460800;
+  rxOffset: number;
+  txOffset: number;
+  configurePiUart: boolean;
+  dmrEnable: boolean;
+  dmrColorCode: number;
+  dmrMasterPreset: DmrMasterPreset;
+  dmrMasterHost: string;
+  dmrMasterPort: number;
+  dmrMasterPassword: string;
+  ysfEnable: boolean;
+  p25Enable: boolean;
+  nxdnEnable: boolean;
+  dstarEnable: boolean;
+  dstarModule: 'A' | 'B' | 'C';
+  displayType: MmdvmDisplayType;
+  oledType: 3 | 6;
+  latitude: string;
+  longitude: string;
+  location: string;
+}
+
 export interface SecurityConfig {
   enableUfw: boolean;
   enableFail2Ban: boolean;
@@ -122,17 +148,18 @@ export interface NodeConfiguration {
   platform: PlatformConfig;
   allstar: AllStarConfig;
   dvswitch: DvSwitchConfig;
+  mmdvmhost: MmdvmHostConfig;
   security: SecurityConfig;
 }
 
 export type WizardStep = 1 | 2 | 3 | 4 | 5;
 
 export type WorkspaceView =
-  | 'wizard'
+  | 'dashboard'
+  | 'configure'
   | 'topology'
   | 'configs'
-  | 'installer'
-  | 'guide';
+  | 'installer';
 
 export interface ValidationIssue {
   id: string;

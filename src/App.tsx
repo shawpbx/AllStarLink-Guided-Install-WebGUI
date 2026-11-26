@@ -25,24 +25,24 @@ import { NodeSummaryInspector } from './components/NodeSummaryInspector';
 import { TopologyView } from './components/TopologyView';
 import { ConfigFilesView } from './components/ConfigFilesView';
 import { InstallerView } from './components/InstallerView';
-import { InstallGuideView } from './components/InstallGuideView';
+import { DashboardView } from './components/DashboardView';
 
-const STORAGE_KEY = 'asl_dvswitch_wizard_config_v2';
+const STORAGE_KEY = 'asl_dvswitch_wizard_config_v3';
 
 const WIZARD_STEPS: { id: WizardStep; title: string; subtitle: string }[] = [
   { id: 1, title: '01. Target Platform', subtitle: 'Raspberry Pi or Debian 13' },
   { id: 2, title: '02. AllStarLink Node', subtitle: 'Node #, Audio & IAX2' },
-  { id: 3, title: '03. DVSwitch Bridge', subtitle: 'DMR, YSF, P25 & USRP' },
+  { id: 3, title: '03. DVSwitch & MMDVMHost', subtitle: 'Digital Bridge & RF Modem' },
   { id: 4, title: '04. Security & UI', subtitle: 'UFW, Fail2Ban & Web UI' },
   { id: 5, title: '05. Review & Export', subtitle: 'Installer & Bundle' },
 ];
 
 const NAV_ITEMS: { id: WorkspaceView; label: string }[] = [
-  { id: 'wizard', label: 'Wizard' },
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'configure', label: 'Configure' },
   { id: 'topology', label: 'Topology' },
   { id: 'configs', label: 'Config Files' },
-  { id: 'installer', label: 'Installer Script' },
-  { id: 'guide', label: 'Deploy Guide' },
+  { id: 'installer', label: 'Installer' },
 ];
 
 export default function App() {
@@ -55,6 +55,7 @@ export default function App() {
           platform: { ...DEFAULT_NODE_CONFIG.platform, ...(parsed.platform || {}) },
           allstar: { ...DEFAULT_NODE_CONFIG.allstar, ...(parsed.allstar || {}) },
           dvswitch: { ...DEFAULT_NODE_CONFIG.dvswitch, ...(parsed.dvswitch || {}) },
+          mmdvmhost: { ...DEFAULT_NODE_CONFIG.mmdvmhost, ...(parsed.mmdvmhost || {}) },
           security: { ...DEFAULT_NODE_CONFIG.security, ...(parsed.security || {}) },
         };
       }
@@ -65,7 +66,7 @@ export default function App() {
   });
 
   const [step, setStep] = useState<WizardStep>(1);
-  const [view, setView] = useState<WorkspaceView>('wizard');
+  const [view, setView] = useState<WorkspaceView>('dashboard');
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [profileNotice, setProfileNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -121,9 +122,15 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(String(reader.result)) as NodeConfiguration;
+        const parsed = JSON.parse(String(reader.result)) as Partial<NodeConfiguration>;
         if (parsed.platform && parsed.allstar && parsed.dvswitch && parsed.security) {
-          setConfig(parsed);
+          setConfig({
+            platform: { ...DEFAULT_NODE_CONFIG.platform, ...parsed.platform },
+            allstar: { ...DEFAULT_NODE_CONFIG.allstar, ...parsed.allstar },
+            dvswitch: { ...DEFAULT_NODE_CONFIG.dvswitch, ...parsed.dvswitch },
+            mmdvmhost: { ...DEFAULT_NODE_CONFIG.mmdvmhost, ...(parsed.mmdvmhost || {}) },
+            security: { ...DEFAULT_NODE_CONFIG.security, ...parsed.security },
+          });
           setProfileNotice(`Imported profile from ${file.name}`);
         } else {
           setProfileNotice('Invalid profile JSON structure.');
@@ -153,10 +160,10 @@ export default function App() {
       <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-[1380px] mx-auto px-6 h-16 flex items-center justify-between gap-8">
           <a
-            href="#wizard"
+            href="#dashboard"
             onClick={(e) => {
               e.preventDefault();
-              setView('wizard');
+              setView('dashboard');
             }}
             className="text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100 whitespace-nowrap shrink-0 font-display"
           >
@@ -237,6 +244,12 @@ export default function App() {
                 ? `DVSwitch ${config.dvswitch.defaultMode}`
                 : 'ASL3 Standalone'}
             </span>
+            {config.mmdvmhost.enabled && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>MMDVMHost {config.mmdvmhost.modemPort}</span>
+              </>
+            )}
             {profileNotice && (
               <>
                 <span aria-hidden="true">·</span>
@@ -318,7 +331,16 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="max-w-[1380px] mx-auto px-6 py-7">
-        {view === 'wizard' && (
+        {view === 'dashboard' && (
+          <DashboardView
+            config={config}
+            issues={issues}
+            onSwitchView={setView}
+            onJumpToStep={setStep}
+          />
+        )}
+
+        {view === 'configure' && (
           <div className="grid grid-cols-1 lg:grid-cols-[248px_minmax(0,1fr)_320px] gap-6 items-start">
             {/* Left Wizard Stepper Sidebar */}
             <aside aria-label="Wizard stages" className="space-y-1.5">
@@ -392,8 +414,6 @@ export default function App() {
         {view === 'configs' && <ConfigFilesView config={config} />}
 
         {view === 'installer' && <InstallerView config={config} />}
-
-        {view === 'guide' && <InstallGuideView config={config} />}
       </main>
     </div>
   );

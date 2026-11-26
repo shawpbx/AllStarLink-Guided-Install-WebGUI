@@ -37,57 +37,6 @@ export function validateNodeConfig(config: NodeConfiguration): ValidationIssue[]
     });
   }
 
-  if (config.platform.createCustomUser) {
-    const username = config.platform.adminUsername.trim();
-    if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(username) || username === 'root') {
-      issues.push({
-        id: 'admin-username-invalid',
-        severity: 'error',
-        step: 1,
-        field: 'adminUsername',
-        message: 'Admin username must be a valid non-root lowercase Linux username (e.g. pi or asladmin).',
-      });
-    }
-    if (
-      config.platform.sshAuthorizedKey.trim() &&
-      !/^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp\d+|sk-ssh-)/.test(
-        config.platform.sshAuthorizedKey.trim()
-      )
-    ) {
-      issues.push({
-        id: 'ssh-key-invalid',
-        severity: 'warning',
-        step: 1,
-        field: 'sshAuthorizedKey',
-        message: 'SSH public key should begin with ssh-ed25519, ssh-rsa, or ecdsa-sha2-*.',
-      });
-    }
-  }
-
-  if (config.platform.configureWifi) {
-    if (!config.platform.wifiSsid.trim()) {
-      issues.push({
-        id: 'wifi-ssid-required',
-        severity: 'error',
-        step: 1,
-        field: 'wifiSsid',
-        message: 'Wi-Fi SSID network name is required when Wi-Fi provisioning is enabled.',
-      });
-    }
-    if (
-      config.platform.wifiPassword.trim().length > 0 &&
-      config.platform.wifiPassword.trim().length < 8
-    ) {
-      issues.push({
-        id: 'wifi-psk-short',
-        severity: 'warning',
-        step: 1,
-        field: 'wifiPassword',
-        message: 'WPA2/WPA3 Wi-Fi passphrases are normally 8 to 63 characters.',
-      });
-    }
-  }
-
   // AllStarLink checks
   const nodeNum = config.allstar.nodeNumber.trim();
   if (!/^\d{4,6}$/.test(nodeNum)) {
@@ -227,6 +176,55 @@ export function validateNodeConfig(config: NodeConfiguration): ValidationIssue[]
         step: 3,
         field: 'dmrMasterPassword',
         message: 'DMR Master hotspot security password is empty.',
+      });
+    }
+  }
+
+  // MMDVMHost checks
+  if (config.mmdvmhost.enabled) {
+    if (!/^\d{7}$/.test(config.mmdvmhost.dmrId.trim())) {
+      issues.push({
+        id: 'mmdvm-dmr-id',
+        severity: 'error',
+        step: 3,
+        field: 'mmdvmDmrId',
+        message: 'MMDVMHost requires a 7-digit DMR / RadioID.',
+      });
+    }
+    if (!/^\d{2}$/.test(config.mmdvmhost.repeaterSuffix.trim())) {
+      issues.push({
+        id: 'mmdvm-suffix',
+        severity: 'error',
+        step: 3,
+        field: 'mmdvmSuffix',
+        message: 'MMDVMHost ESSID suffix must be 2 digits (e.g. 02).',
+      });
+    }
+    if (!/^\d{8,9}$/.test(config.mmdvmhost.rxFrequencyHz.trim()) || !/^\d{8,9}$/.test(config.mmdvmhost.txFrequencyHz.trim())) {
+      issues.push({
+        id: 'mmdvm-freq',
+        severity: 'error',
+        step: 3,
+        field: 'mmdvmFreq',
+        message: 'MMDVMHost RX and TX frequencies must be entered in Hz (e.g. 446500000).',
+      });
+    }
+    if (config.mmdvmhost.dmrEnable && !config.mmdvmhost.dmrMasterHost.trim()) {
+      issues.push({
+        id: 'mmdvm-dmr-host',
+        severity: 'error',
+        step: 3,
+        field: 'mmdvmDmrHost',
+        message: 'MMDVMHost DMR Master Server hostname is required when DMR is enabled.',
+      });
+    }
+    if (config.mmdvmhost.dmrEnable && !config.mmdvmhost.dmrMasterPassword.trim()) {
+      issues.push({
+        id: 'mmdvm-dmr-pass',
+        severity: 'warning',
+        step: 3,
+        field: 'mmdvmDmrPass',
+        message: 'MMDVMHost DMR Master hotspot security password is empty.',
       });
     }
   }

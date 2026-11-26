@@ -13,7 +13,6 @@ import {
   DMR_MASTER_PRESETS,
   PLATFORM_OPTIONS,
   TIMEZONES,
-  WIFI_COUNTRY_CODES,
 } from '../data/presets';
 import {
   DmrMasterPreset,
@@ -50,11 +49,10 @@ export function WizardForms({
   onStepChange,
   onSwitchView,
 }: WizardFormsProps) {
-  const [showAdminPass, setShowAdminPass] = useState(false);
-  const [showWifiPass, setShowWifiPass] = useState(false);
   const [showAslPass, setShowAslPass] = useState(false);
   const [showAmiPass, setShowAmiPass] = useState(false);
   const [showDmrPass, setShowDmrPass] = useState(false);
+  const [showMmdvmDmrPass, setShowMmdvmDmrPass] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState(false);
 
   const updatePlatform = (patch: Partial<NodeConfiguration['platform']>) => {
@@ -67,6 +65,10 @@ export function WizardForms({
 
   const updateDvSwitch = (patch: Partial<NodeConfiguration['dvswitch']>) => {
     onChange({ ...config, dvswitch: { ...config.dvswitch, ...patch } });
+  };
+
+  const updateMmdvmHost = (patch: Partial<NodeConfiguration['mmdvmhost']>) => {
+    onChange({ ...config, mmdvmhost: { ...config.mmdvmhost, ...patch } });
   };
 
   const updateSecurity = (patch: Partial<NodeConfiguration['security']>) => {
@@ -93,12 +95,22 @@ export function WizardForms({
     });
   };
 
+  const handleMmdvmDmrPresetChange = (presetKey: DmrMasterPreset) => {
+    const preset = DMR_MASTER_PRESETS[presetKey];
+    updateMmdvmHost({
+      dmrMasterPreset: presetKey,
+      dmrMasterHost: preset.host,
+      dmrMasterPort: preset.port,
+    });
+  };
+
   const fieldError = (fieldName: string) =>
     issues.find((i) => i.field === fieldName && i.severity === 'error');
 
   const errorCount = issues.filter((i) => i.severity === 'error').length;
 
-  const oneLineDeploy = `scp install-asl-node.sh root@<node-ip>:/root/ && ssh root@<node-ip> "chmod +x /root/install-asl-node.sh && bash /root/install-asl-node.sh"`;
+  const scriptName = `install-asl-${config.allstar.nodeNumber || 'node'}.sh`;
+  const oneLineDeploy = `scp ${scriptName} root@<node-ip>:/root/ && ssh root@<node-ip> "chmod +x /root/${scriptName} && bash /root/${scriptName}"`;
 
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg">
@@ -111,7 +123,7 @@ export function WizardForms({
           <h2 className="mt-0.5 text-lg font-semibold text-slate-900 dark:text-slate-100">
             {step === 1 && '01. Target Platform & Operating System'}
             {step === 2 && '02. AllStarLink 3 Node & Audio Interface'}
-            {step === 3 && '03. DVSwitch Server & Digital Voice Bridge'}
+            {step === 3 && '03. DVSwitch Server & MMDVMHost RF Modem'}
             {step === 4 && '04. Security, Firewall & Local HTML Dashboard'}
             {step === 5 && '05. Review & Generate Installer Bundle'}
           </h2>
@@ -236,200 +248,6 @@ export function WizardForms({
                   className={`${inputCls} font-mono tabular-nums`}
                 />
               </div>
-            </div>
-
-            {/* Linux Admin User & SSH Setup */}
-            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    Node Admin User &amp; SSH Access
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Creates or updates a non-root sudo account with audio and dialout USB device permissions.
-                  </p>
-                </div>
-                <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={config.platform.createCustomUser}
-                    onChange={(e) => updatePlatform({ createCustomUser: e.target.checked })}
-                    className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
-                  />
-                  <span>Configure User</span>
-                </label>
-              </div>
-
-              {config.platform.createCustomUser && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="adminUsername" className={labelCls}>
-                        Admin Username
-                      </label>
-                      <input
-                        id="adminUsername"
-                        type="text"
-                        value={config.platform.adminUsername}
-                        onChange={(e) =>
-                          updatePlatform({
-                            adminUsername: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''),
-                          })
-                        }
-                        className={`${inputCls} font-mono`}
-                        placeholder="pi"
-                      />
-                      {fieldError('adminUsername') ? (
-                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-                          {fieldError('adminUsername')?.message}
-                        </p>
-                      ) : (
-                        <p className={helpCls}>
-                          Added to sudo, audio, dialout, and plugdev groups.
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label htmlFor="adminPassword" className={labelCls}>
-                        User Password (Optional)
-                      </label>
-                      <div className="relative">
-                        <input
-                          id="adminPassword"
-                          type={showAdminPass ? 'text' : 'password'}
-                          value={config.platform.adminPassword}
-                          onChange={(e) => updatePlatform({ adminPassword: e.target.value })}
-                          className={`${inputCls} pr-10 font-mono`}
-                          placeholder="Leave blank to keep existing password"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowAdminPass((v) => !v)}
-                          aria-label={showAdminPass ? 'Hide user password' : 'Show user password'}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400"
-                        >
-                          {showAdminPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label htmlFor="sshAuthorizedKey" className={labelCls}>
-                      SSH Public Key (authorized_keys, Optional)
-                    </label>
-                    <input
-                      id="sshAuthorizedKey"
-                      type="text"
-                      value={config.platform.sshAuthorizedKey}
-                      onChange={(e) => updatePlatform({ sshAuthorizedKey: e.target.value })}
-                      className={`${inputCls} font-mono text-xs`}
-                      placeholder="ssh-ed25519 AAAA... operator@workstation"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Raspberry Pi Wi-Fi Setup */}
-            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    Raspberry Pi Wi-Fi &amp; Regulatory Domain
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Provisions NetworkManager (nmcli) or wpa_supplicant on Raspberry Pi OS Bookworm / Trixie.
-                  </p>
-                </div>
-                <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={config.platform.configureWifi}
-                    onChange={(e) => updatePlatform({ configureWifi: e.target.checked })}
-                    className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
-                  />
-                  <span>Configure Wi-Fi</span>
-                </label>
-              </div>
-
-              {config.platform.configureWifi && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <label htmlFor="wifiCountry" className={labelCls}>
-                        Wi-Fi Country Code
-                      </label>
-                      <select
-                        id="wifiCountry"
-                        value={config.platform.wifiCountry}
-                        onChange={(e) => updatePlatform({ wifiCountry: e.target.value })}
-                        className={inputCls}
-                      >
-                        {WIFI_COUNTRY_CODES.map((c) => (
-                          <option key={c.code} value={c.code}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label htmlFor="wifiSsid" className={labelCls}>
-                        Wi-Fi Network Name (SSID)
-                      </label>
-                      <input
-                        id="wifiSsid"
-                        type="text"
-                        value={config.platform.wifiSsid}
-                        onChange={(e) => updatePlatform({ wifiSsid: e.target.value })}
-                        className={inputCls}
-                        placeholder="Shack-WiFi"
-                      />
-                      {fieldError('wifiSsid') && (
-                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-                          {fieldError('wifiSsid')?.message}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label htmlFor="wifiPassword" className={labelCls}>
-                        WPA2 / WPA3 Passphrase
-                      </label>
-                      <div className="relative">
-                        <input
-                          id="wifiPassword"
-                          type={showWifiPass ? 'text' : 'password'}
-                          value={config.platform.wifiPassword}
-                          onChange={(e) => updatePlatform({ wifiPassword: e.target.value })}
-                          className={`${inputCls} pr-10 font-mono`}
-                          placeholder="Leave empty for open SSID"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowWifiPass((v) => !v)}
-                          aria-label={showWifiPass ? 'Hide Wi-Fi password' : 'Show Wi-Fi password'}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400"
-                        >
-                          {showWifiPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <label className="inline-flex items-center gap-2.5 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={config.platform.wifiHidden}
-                      onChange={(e) => updatePlatform({ wifiHidden: e.target.checked })}
-                      className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
-                    />
-                    <span>Hidden SSID (enable scan_ssid / 802-11-wireless.hidden)</span>
-                  </label>
-                </div>
-              )}
             </div>
 
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
@@ -1281,6 +1099,429 @@ export function WizardForms({
                 </div>
               </>
             )}
+
+            {/* MMDVMHost RF Modem Section */}
+            <div className="pt-6 border-t border-slate-200 dark:border-slate-800 space-y-5">
+              <div className="flex items-center justify-between gap-4 p-4 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-950/50">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    Build &amp; Configure MMDVMHost (RF Modem / Hat)
+                  </h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                    Clones and compiles g4klx/MMDVMHost, generates /etc/mmdvm/MMDVM.ini, and configures mmdvmhost.service for GPIO or USB MMDVM boards.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={config.mmdvmhost.enabled}
+                  onClick={() => updateMmdvmHost({ enabled: !config.mmdvmhost.enabled })}
+                  className={`min-h-[40px] px-4 py-2 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                    config.mmdvmhost.enabled
+                      ? 'bg-sky-700 text-white hover:bg-sky-800'
+                      : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {config.mmdvmhost.enabled ? 'MMDVMHost Enabled' : 'MMDVMHost Disabled'}
+                </button>
+              </div>
+
+              {!config.mmdvmhost.enabled ? (
+                <div className="py-6 text-center border border-dashed border-slate-200 dark:border-slate-800 rounded-md">
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    MMDVMHost RF controller is disabled. Enable it if running a Raspberry Pi MMDVM_HS hat or USB MMDVM modem alongside ASL3.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => updateMmdvmHost({ enabled: true })}
+                    className="mt-3 min-h-[38px] px-4 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                  >
+                    Enable MMDVMHost
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                    <div>
+                      <label htmlFor="mmdvmDmrId" className={labelCls}>
+                        MMDVM DMR / RadioID
+                      </label>
+                      <input
+                        id="mmdvmDmrId"
+                        type="text"
+                        inputMode="numeric"
+                        value={config.mmdvmhost.dmrId}
+                        onChange={(e) =>
+                          updateMmdvmHost({
+                            dmrId: e.target.value.replace(/\D/g, '').slice(0, 7),
+                          })
+                        }
+                        className={`${inputCls} font-mono tabular-nums`}
+                        placeholder="7-digit RadioID"
+                      />
+                      {fieldError('mmdvmDmrId') && (
+                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                          {fieldError('mmdvmDmrId')?.message}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label htmlFor="mmdvmSuffix" className={labelCls}>
+                        ESSID Suffix (2-digit)
+                      </label>
+                      <input
+                        id="mmdvmSuffix"
+                        type="text"
+                        inputMode="numeric"
+                        value={config.mmdvmhost.repeaterSuffix}
+                        onChange={(e) =>
+                          updateMmdvmHost({
+                            repeaterSuffix: e.target.value.replace(/\D/g, '').slice(0, 2),
+                          })
+                        }
+                        className={`${inputCls} font-mono tabular-nums`}
+                        placeholder="02"
+                      />
+                      {fieldError('mmdvmSuffix') ? (
+                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                          {fieldError('mmdvmSuffix')?.message}
+                        </p>
+                      ) : (
+                        <p className={helpCls}>
+                          Full ID: <span className="font-mono">{config.mmdvmhost.dmrId}{config.mmdvmhost.repeaterSuffix}</span>
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label htmlFor="mmdvmRxFreq" className={labelCls}>
+                        RX Frequency (Hz)
+                      </label>
+                      <input
+                        id="mmdvmRxFreq"
+                        type="text"
+                        inputMode="numeric"
+                        value={config.mmdvmhost.rxFrequencyHz}
+                        onChange={(e) =>
+                          updateMmdvmHost({
+                            rxFrequencyHz: e.target.value.replace(/\D/g, '').slice(0, 9),
+                          })
+                        }
+                        className={`${inputCls} font-mono tabular-nums`}
+                        placeholder="e.g. 446500000"
+                      />
+                    </div>
+
+                    <div>
+                      <label htmlFor="mmdvmTxFreq" className={labelCls}>
+                        TX Frequency (Hz)
+                      </label>
+                      <input
+                        id="mmdvmTxFreq"
+                        type="text"
+                        inputMode="numeric"
+                        value={config.mmdvmhost.txFrequencyHz}
+                        onChange={(e) =>
+                          updateMmdvmHost({
+                            txFrequencyHz: e.target.value.replace(/\D/g, '').slice(0, 9),
+                          })
+                        }
+                        className={`${inputCls} font-mono tabular-nums`}
+                        placeholder="e.g. 446500000"
+                      />
+                    </div>
+                  </div>
+                  {fieldError('mmdvmFreq') && (
+                    <p className="text-xs text-red-600 dark:text-red-400">
+                      {fieldError('mmdvmFreq')?.message}
+                    </p>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                    <div>
+                      <label htmlFor="mmdvmPort" className={labelCls}>
+                        Modem Serial / UART Port
+                      </label>
+                      <input
+                        id="mmdvmPort"
+                        list="mmdvmPortOptions"
+                        type="text"
+                        value={config.mmdvmhost.modemPort}
+                        onChange={(e) => updateMmdvmHost({ modemPort: e.target.value })}
+                        className={`${inputCls} font-mono`}
+                        placeholder="/dev/ttyAMA0"
+                      />
+                      <datalist id="mmdvmPortOptions">
+                        <option value="/dev/ttyAMA0" />
+                        <option value="/dev/ttyUSB0" />
+                        <option value="/dev/ttyACM0" />
+                      </datalist>
+                    </div>
+
+                    <div>
+                      <label htmlFor="mmdvmBaud" className={labelCls}>
+                        UART Baud Rate
+                      </label>
+                      <select
+                        id="mmdvmBaud"
+                        value={config.mmdvmhost.modemBaud}
+                        onChange={(e) =>
+                          updateMmdvmHost({
+                            modemBaud: Number(e.target.value) as 115200 | 230400 | 460800,
+                          })
+                        }
+                        className={`${inputCls} font-mono tabular-nums`}
+                      >
+                        <option value={115200}>115200</option>
+                        <option value={230400}>230400</option>
+                        <option value={460800}>460800</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label htmlFor="mmdvmRxOffset" className={labelCls}>
+                        RX / TX Offset (Hz)
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          id="mmdvmRxOffset"
+                          type="number"
+                          aria-label="MMDVM RX Offset Hz"
+                          value={config.mmdvmhost.rxOffset}
+                          onChange={(e) =>
+                            updateMmdvmHost({ rxOffset: Number(e.target.value) || 0 })
+                          }
+                          className={`${inputCls} font-mono tabular-nums`}
+                          placeholder="RX 0"
+                        />
+                        <input
+                          id="mmdvmTxOffset"
+                          type="number"
+                          aria-label="MMDVM TX Offset Hz"
+                          value={config.mmdvmhost.txOffset}
+                          onChange={(e) =>
+                            updateMmdvmHost({ txOffset: Number(e.target.value) || 0 })
+                          }
+                          className={`${inputCls} font-mono tabular-nums`}
+                          placeholder="TX 0"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label htmlFor="mmdvmRfPower" className={labelCls}>
+                        RF Level (%) &amp; Duplex
+                      </label>
+                      <div className="flex items-center gap-3">
+                        <input
+                          id="mmdvmRfPower"
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={config.mmdvmhost.rfPower}
+                          onChange={(e) =>
+                            updateMmdvmHost({
+                              rfPower: Math.min(100, Math.max(1, Number(e.target.value) || 100)),
+                            })
+                          }
+                          className={`${inputCls} font-mono tabular-nums`}
+                        />
+                        <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap shrink-0 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={config.mmdvmhost.duplex}
+                            onChange={(e) => updateMmdvmHost({ duplex: e.target.checked })}
+                            className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                          />
+                          Duplex
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {config.platform.target.startsWith('rpi') && (
+                    <label className="flex items-center gap-2.5 p-3 rounded-md border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.mmdvmhost.configurePiUart}
+                        onChange={(e) =>
+                          updateMmdvmHost({ configurePiUart: e.target.checked })
+                        }
+                        className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                      />
+                      <span>
+                        Enable Raspberry Pi GPIO UART hardware &amp; disable serial login console (required for /dev/ttyAMA0 MMDVM_HS hats)
+                      </span>
+                    </label>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                    <div>
+                      <label htmlFor="mmdvmDmrPreset" className={labelCls}>
+                        MMDVMHost DMR Master Preset
+                      </label>
+                      <select
+                        id="mmdvmDmrPreset"
+                        value={config.mmdvmhost.dmrMasterPreset}
+                        onChange={(e) =>
+                          handleMmdvmDmrPresetChange(e.target.value as DmrMasterPreset)
+                        }
+                        className={inputCls}
+                      >
+                        {Object.entries(DMR_MASTER_PRESETS).map(([key, info]) => (
+                          <option key={key} value={key}>
+                            {info.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label htmlFor="mmdvmDmrHost" className={labelCls}>
+                        DMR Master Hostname
+                      </label>
+                      <input
+                        id="mmdvmDmrHost"
+                        type="text"
+                        value={config.mmdvmhost.dmrMasterHost}
+                        onChange={(e) =>
+                          updateMmdvmHost({
+                            dmrMasterPreset: 'custom',
+                            dmrMasterHost: e.target.value,
+                          })
+                        }
+                        className={`${inputCls} font-mono`}
+                      />
+                      {fieldError('mmdvmDmrHost') && (
+                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                          {fieldError('mmdvmDmrHost')?.message}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label htmlFor="mmdvmDmrPassword" className={labelCls}>
+                        DMR Master Password
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="mmdvmDmrPassword"
+                          type={showMmdvmDmrPass ? 'text' : 'password'}
+                          value={config.mmdvmhost.dmrMasterPassword}
+                          onChange={(e) =>
+                            updateMmdvmHost({ dmrMasterPassword: e.target.value })
+                          }
+                          className={`${inputCls} pr-10 font-mono`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowMmdvmDmrPass((v) => !v)}
+                          aria-label={
+                            showMmdvmDmrPass
+                              ? 'Hide MMDVMHost DMR password'
+                              : 'Show MMDVMHost DMR password'
+                          }
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400"
+                        >
+                          {showMmdvmDmrPass ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label htmlFor="mmdvmColorCode" className={labelCls}>
+                        DMR Color Code &amp; Display
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          id="mmdvmColorCode"
+                          type="number"
+                          min={0}
+                          max={15}
+                          aria-label="DMR Color Code"
+                          value={config.mmdvmhost.dmrColorCode}
+                          onChange={(e) =>
+                            updateMmdvmHost({
+                              dmrColorCode: Math.min(15, Math.max(0, Number(e.target.value) || 1)),
+                            })
+                          }
+                          className={`${inputCls} font-mono tabular-nums`}
+                        />
+                        <select
+                          id="mmdvmDisplayType"
+                          aria-label="MMDVM Display Type"
+                          value={config.mmdvmhost.displayType}
+                          onChange={(e) =>
+                            updateMmdvmHost({
+                              displayType: e.target.value as NodeConfiguration['mmdvmhost']['displayType'],
+                            })
+                          }
+                          className={inputCls}
+                        >
+                          <option value="None">No Display</option>
+                          <option value="OLED">OLED</option>
+                          <option value="Nextion">Nextion</option>
+                          <option value="HD44780">HD44780</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    <label className="flex items-center gap-2 p-2.5 rounded-md border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.mmdvmhost.dmrEnable}
+                        onChange={(e) => updateMmdvmHost({ dmrEnable: e.target.checked })}
+                        className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                      />
+                      <span>DMR</span>
+                    </label>
+                    <label className="flex items-center gap-2 p-2.5 rounded-md border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.mmdvmhost.ysfEnable}
+                        onChange={(e) => updateMmdvmHost({ ysfEnable: e.target.checked })}
+                        className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                      />
+                      <span>System Fusion</span>
+                    </label>
+                    <label className="flex items-center gap-2 p-2.5 rounded-md border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.mmdvmhost.p25Enable}
+                        onChange={(e) => updateMmdvmHost({ p25Enable: e.target.checked })}
+                        className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                      />
+                      <span>P25</span>
+                    </label>
+                    <label className="flex items-center gap-2 p-2.5 rounded-md border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.mmdvmhost.nxdnEnable}
+                        onChange={(e) => updateMmdvmHost({ nxdnEnable: e.target.checked })}
+                        className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                      />
+                      <span>NXDN</span>
+                    </label>
+                    <label className="flex items-center gap-2 p-2.5 rounded-md border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.mmdvmhost.dstarEnable}
+                        onChange={(e) => updateMmdvmHost({ dstarEnable: e.target.checked })}
+                        className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                      />
+                      <span>D-Star</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
           </>
         )}
 
