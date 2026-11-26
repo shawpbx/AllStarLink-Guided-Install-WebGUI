@@ -30,6 +30,15 @@ Once installed, open the WebGUI in your browser at:
 http://<node-ip>:8080
 ```
 
+## Direct On-Node Installation
+
+When running the WebGUI directly on your Raspberry Pi or Debian 13 node:
+
+1. Configure your AllStarLink 3, DVSwitch Server, and MMDVMHost settings in the **Configure** tab.
+2. Click **Install on This Node** (or finish Step 5).
+3. On first use, set a local admin password (stored as a salted scrypt hash in `/etc/allstarlink-webgui/admin.hash`, or override via `ASL_WEBGUI_ADMIN_PASSWORD`).
+4. Click **Run Install Now** to execute the full installation directly on the node with live progress and log streaming—no script download or `scp` required.
+
 ## Updating from GitHub
 
 ```bash

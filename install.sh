@@ -159,63 +159,11 @@ else
 fi
 npm run build
 
-# Create lightweight production static + systemd status API server
-cat <<'EOF_PY' > "${INSTALL_DIR}/webgui-server.py"
-import http.server
-import json
-import os
-import socket
-import subprocess
-
-DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist")
-PORT = int(os.environ.get("ASL_WEBGUI_PORT", "8080"))
-SERVICES = [
-    "asterisk",
-    "allmon3",
-    "md380-emu",
-    "analog_bridge",
-    "mmdvm_bridge",
-    "mmdvmhost",
-]
-
-
-class WebGuiHandler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=DIST_DIR, **kwargs)
-
-    def do_GET(self):
-        if self.path == "/api/status":
-            services = {}
-            for svc in SERVICES:
-                res = subprocess.run(
-                    ["systemctl", "is-active", svc],
-                    capture_output=True,
-                    text=True,
-                )
-                services[svc] = res.stdout.strip() or "inactive"
-            payload = json.dumps(
-                {
-                    "hostname": socket.gethostname(),
-                    "services": services,
-                }
-            ).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-            return
-        if self.path == "/" or not os.path.exists(
-            os.path.join(DIST_DIR, self.path.lstrip("/"))
-        ):
-            self.path = "/index.html"
-        return super().do_GET()
-
-
-if __name__ == "__main__":
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), WebGuiHandler)
-    server.serve_forever()
-EOF_PY
+if [[ ! -f "${INSTALL_DIR}/webgui-server.py" ]]; then
+  echo "[ERROR] Missing ${INSTALL_DIR}/webgui-server.py in repository."
+  exit 1
+fi
+chmod 0755 "${INSTALL_DIR}/webgui-server.py"
 
 cat <<EOF_SVC > /etc/systemd/system/asl-webgui.service
 [Unit]

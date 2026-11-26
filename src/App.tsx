@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Download,
   Moon,
+  Play,
   RotateCcw,
   Sun,
   Upload,
@@ -26,6 +27,7 @@ import { TopologyView } from './components/TopologyView';
 import { ConfigFilesView } from './components/ConfigFilesView';
 import { InstallerView } from './components/InstallerView';
 import { DashboardView } from './components/DashboardView';
+import { useLocalNode } from './hooks/useLocalNode';
 
 const STORAGE_KEY = 'asl_dvswitch_wizard_config_v3';
 
@@ -75,6 +77,7 @@ export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(false);
   const [profileNotice, setProfileNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const localNode = useLocalNode();
 
   useEffect(() => {
     try {
@@ -199,14 +202,25 @@ export default function App() {
           </nav>
 
           <div className="flex items-center shrink-0">
-            <button
-              type="button"
-              onClick={handleDownloadInstaller}
-              className="min-h-[40px] px-4 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600"
-            >
-              <Download className="w-3.5 h-3.5" aria-hidden="true" />
-              Download Installer
-            </button>
+            {localNode.localNodeAvailable ? (
+              <button
+                type="button"
+                onClick={() => setView('installer')}
+                className="min-h-[40px] px-4 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600"
+              >
+                <Play className="w-3.5 h-3.5" aria-hidden="true" />
+                Install on This Node
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleDownloadInstaller}
+                className="min-h-[40px] px-4 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600"
+              >
+                <Download className="w-3.5 h-3.5" aria-hidden="true" />
+                Download Installer
+              </button>
+            )}
           </div>
         </div>
 
@@ -340,6 +354,7 @@ export default function App() {
           <DashboardView
             config={config}
             issues={issues}
+            localNode={localNode}
             onSwitchView={setView}
             onJumpToStep={setStep}
           />
@@ -392,6 +407,7 @@ export default function App() {
                 step={step}
                 config={config}
                 issues={issues}
+                localNode={localNode}
                 onChange={setConfig}
                 onStepChange={setStep}
                 onSwitchView={setView}
@@ -418,7 +434,15 @@ export default function App() {
 
         {view === 'configs' && <ConfigFilesView config={config} />}
 
-        {view === 'installer' && <InstallerView config={config} />}
+        {view === 'installer' && (
+          <InstallerView
+            config={config}
+            issues={issues}
+            localNode={localNode}
+            onJumpToStep={setStep}
+            onSwitchView={setView}
+          />
+        )}
       </main>
     </div>
   );

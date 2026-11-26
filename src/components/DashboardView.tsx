@@ -8,6 +8,7 @@ import {
   Copy,
   Download,
   FileCode2,
+  Play,
   SlidersHorizontal,
 } from 'lucide-react';
 import { PLATFORM_OPTIONS } from '../data/presets';
@@ -23,10 +24,12 @@ import {
   normalizeGitHubRepo,
 } from '../utils/generators';
 import { downloadTextFile } from '../utils/download';
+import { LocalNodeController } from '../hooks/useLocalNode';
 
 interface DashboardViewProps {
   config: NodeConfiguration;
   issues: ValidationIssue[];
+  localNode: LocalNodeController;
   onSwitchView: (view: WorkspaceView) => void;
   onJumpToStep: (step: WizardStep) => void;
 }
@@ -34,6 +37,7 @@ interface DashboardViewProps {
 export function DashboardView({
   config,
   issues,
+  localNode,
   onSwitchView,
   onJumpToStep,
 }: DashboardViewProps) {
@@ -199,20 +203,31 @@ export function DashboardView({
               <FileCode2 className="w-4 h-4" aria-hidden="true" />
               Export Node HTML
             </button>
-            <button
-              type="button"
-              onClick={() =>
-                downloadTextFile(
-                  scriptName,
-                  generateInstallScript(config),
-                  'text/x-shellscript'
-                )
-              }
-              className="min-h-[42px] px-4 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-2 transition-colors whitespace-nowrap"
-            >
-              <Download className="w-4 h-4" aria-hidden="true" />
-              Download Installer (.sh)
-            </button>
+            {localNode.localNodeAvailable ? (
+              <button
+                type="button"
+                onClick={() => onSwitchView('installer')}
+                className="min-h-[42px] px-4 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-2 transition-colors whitespace-nowrap"
+              >
+                <Play className="w-4 h-4" aria-hidden="true" />
+                Run Install on This Node
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() =>
+                  downloadTextFile(
+                    scriptName,
+                    generateInstallScript(config),
+                    'text/x-shellscript'
+                  )
+                }
+                className="min-h-[42px] px-4 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-2 transition-colors whitespace-nowrap"
+              >
+                <Download className="w-4 h-4" aria-hidden="true" />
+                Download Installer (.sh)
+              </button>
+            )}
           </div>
         </div>
 
@@ -312,35 +327,51 @@ export function DashboardView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
-                {serviceRows.map((row) => (
-                  <tr
-                    key={row.unit}
-                    onClick={() => openStep(row.step)}
-                    className="h-11 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors"
-                  >
-                    <td className="py-2 pr-3 font-mono font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap">
-                      {row.unit}
-                    </td>
-                    <td className="py-2 pr-3 text-slate-600 dark:text-slate-300">
-                      <div>{row.role}</div>
-                      <div className="font-mono text-[11px] text-slate-400">{row.configPath}</div>
-                    </td>
-                    <td className="py-2 pr-3 font-mono tabular-nums text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                      {row.port}
-                    </td>
-                    <td className="py-2 text-right whitespace-nowrap">
-                      <span
-                        className={`font-medium ${
-                          row.enabled
-                            ? 'text-emerald-700 dark:text-emerald-400'
-                            : 'text-slate-400 dark:text-slate-500'
-                        }`}
-                      >
-                        {row.enabled ? 'Enabled' : 'Skipped'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {serviceRows.map((row) => {
+                  const unitKey = row.unit.replace(/\.service$/, '');
+                  const liveState = localNode.liveServices?.[unitKey];
+                  return (
+                    <tr
+                      key={row.unit}
+                      onClick={() => openStep(row.step)}
+                      className="h-11 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors"
+                    >
+                      <td className="py-2 pr-3 font-mono font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap">
+                        {row.unit}
+                      </td>
+                      <td className="py-2 pr-3 text-slate-600 dark:text-slate-300">
+                        <div>{row.role}</div>
+                        <div className="font-mono text-[11px] text-slate-400">{row.configPath}</div>
+                      </td>
+                      <td className="py-2 pr-3 font-mono tabular-nums text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                        {row.port}
+                      </td>
+                      <td className="py-2 text-right whitespace-nowrap">
+                        {liveState ? (
+                          <span
+                            className={`font-mono font-medium ${
+                              liveState === 'active'
+                                ? 'text-emerald-700 dark:text-emerald-400'
+                                : 'text-amber-700 dark:text-amber-400'
+                            }`}
+                          >
+                            {liveState}
+                          </span>
+                        ) : (
+                          <span
+                            className={`font-medium ${
+                              row.enabled
+                                ? 'text-emerald-700 dark:text-emerald-400'
+                                : 'text-slate-400 dark:text-slate-500'
+                            }`}
+                          >
+                            {row.enabled ? 'Enabled' : 'Skipped'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

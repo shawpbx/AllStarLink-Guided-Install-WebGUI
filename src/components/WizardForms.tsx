@@ -23,11 +23,14 @@ import {
 } from '../types/nodeConfig';
 import { generateInstallScript, generateStandaloneDashboardHtml, getAllGeneratedFiles } from '../utils/generators';
 import { downloadTextFile } from '../utils/download';
+import { LocalNodeController } from '../hooks/useLocalNode';
+import { DirectInstallPanel } from './DirectInstallPanel';
 
 interface WizardFormsProps {
   step: WizardStep;
   config: NodeConfiguration;
   issues: ValidationIssue[];
+  localNode: LocalNodeController;
   onChange: (next: NodeConfiguration) => void;
   onStepChange: (step: WizardStep) => void;
   onSwitchView: (view: WorkspaceView) => void;
@@ -45,6 +48,7 @@ export function WizardForms({
   step,
   config,
   issues,
+  localNode,
   onChange,
   onStepChange,
   onSwitchView,
@@ -1681,10 +1685,18 @@ export function WizardForms({
           </>
         )}
 
-        {/* STEP 5: REVIEW & DOWNLOAD */}
+        {/* STEP 5: REVIEW & INSTALL */}
         {step === 5 && (
           <div className="space-y-6">
-            {errorCount > 0 && (
+            <DirectInstallPanel
+              config={config}
+              issues={issues}
+              localNode={localNode}
+              onJumpToStep={onStepChange}
+              onSwitchView={onSwitchView}
+            />
+
+            {!localNode.localNodeAvailable && errorCount > 0 && (
               <div className="p-4 rounded-md border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/30 text-sm text-red-800 dark:text-red-300">
                 Resolve {errorCount} configuration {errorCount === 1 ? 'error' : 'errors'} in the Validation panel before deploying to a live node.
               </div>
@@ -1700,7 +1712,11 @@ export function WizardForms({
                     'text/x-shellscript'
                   )
                 }
-                className="min-h-[44px] px-4 py-3 rounded-md bg-sky-700 hover:bg-sky-800 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors whitespace-nowrap"
+                className={`min-h-[44px] px-4 py-3 rounded-md text-sm inline-flex items-center justify-center gap-2 transition-colors whitespace-nowrap ${
+                  localNode.localNodeAvailable
+                    ? 'border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 font-medium'
+                    : 'bg-sky-700 hover:bg-sky-800 text-white font-semibold'
+                }`}
               >
                 <Download className="w-4 h-4" aria-hidden="true" />
                 Download Installer (.sh)

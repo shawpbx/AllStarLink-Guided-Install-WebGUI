@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Check, Copy, Download } from 'lucide-react';
-import { NodeConfiguration } from '../types/nodeConfig';
+import { NodeConfiguration, ValidationIssue, WizardStep, WorkspaceView } from '../types/nodeConfig';
 import {
   generateGitHubBootstrapScript,
   generateGitHubReadme,
@@ -8,14 +8,26 @@ import {
   normalizeGitHubRepo,
 } from '../utils/generators';
 import { downloadTextFile } from '../utils/download';
+import { LocalNodeController } from '../hooks/useLocalNode';
+import { DirectInstallPanel } from './DirectInstallPanel';
 
 interface InstallerViewProps {
   config: NodeConfiguration;
+  issues: ValidationIssue[];
+  localNode: LocalNodeController;
+  onJumpToStep: (step: WizardStep) => void;
+  onSwitchView: (view: WorkspaceView) => void;
 }
 
 type InstallerArtifact = 'node' | 'github' | 'readme';
 
-export function InstallerView({ config }: InstallerViewProps) {
+export function InstallerView({
+  config,
+  issues,
+  localNode,
+  onJumpToStep,
+  onSwitchView,
+}: InstallerViewProps) {
   const [artifact, setArtifact] = useState<InstallerArtifact>('node');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -60,6 +72,15 @@ export function InstallerView({ config }: InstallerViewProps) {
 
   return (
     <div className="space-y-5">
+      {/* Direct Local Execution Panel */}
+      <DirectInstallPanel
+        config={config}
+        issues={issues}
+        localNode={localNode}
+        onJumpToStep={onJumpToStep}
+        onSwitchView={onSwitchView}
+      />
+
       {/* Artifact Switcher + Primary Download */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 space-y-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
