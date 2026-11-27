@@ -141,6 +141,7 @@ export const DEFAULT_NODE_CONFIG: NodeConfiguration = {
     amiSecret: '',
     autoConnectNode: '',
     startupConnectDvSwitch: true,
+    additionalNodes: [],
   },
   dvswitch: {
     enabled: false,

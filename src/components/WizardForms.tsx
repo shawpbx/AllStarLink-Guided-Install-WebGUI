@@ -4,8 +4,10 @@ import {
   Eye,
   EyeOff,
   FileCode2,
+  Plus,
   RefreshCw,
   Terminal,
+  Trash2,
   Check,
   Copy,
 } from 'lucide-react';
@@ -16,6 +18,7 @@ import {
 } from '../data/presets';
 import {
   DmrMasterPreset,
+  ExtraAllStarNode,
   NodeConfiguration,
   ValidationIssue,
   WizardStep,
@@ -34,6 +37,7 @@ interface WizardFormsProps {
   onChange: (next: NodeConfiguration) => void;
   onStepChange: (step: WizardStep) => void;
   onSwitchView: (view: WorkspaceView) => void;
+  onLoadConfigFromHost: (saved: Partial<NodeConfiguration>) => void;
 }
 
 const inputCls =
@@ -52,6 +56,7 @@ export function WizardForms({
   onChange,
   onStepChange,
   onSwitchView,
+  onLoadConfigFromHost,
 }: WizardFormsProps) {
   const [showAslPass, setShowAslPass] = useState(false);
   const [showAmiPass, setShowAmiPass] = useState(false);
@@ -716,6 +721,189 @@ export function WizardForms({
                   </button>
                 </div>
               </div>
+            </div>
+
+            {/* Additional AllStarLink Nodes (Multi-Node Host) */}
+            <div className="pt-5 border-t border-slate-100 dark:border-slate-800 space-y-4">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    Additional AllStarLink Nodes ({(config.allstar.additionalNodes || []).length})
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Add or remove extra public or private AllStarLink nodes hosted on this same Asterisk instance. Apply config changes from the Dashboard or Installer without reinstalling packages.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextNode: ExtraAllStarNode = {
+                      id: `node-${Date.now().toString(36)}`,
+                      nodeNumber: '',
+                      nodePassword: '',
+                      description: '',
+                      duplexMode: '0',
+                      radioInterface: 'pseudo',
+                      cwIdString: '',
+                      hangTimeMs: 0,
+                      autoConnectNode: '',
+                    };
+                    updateAllstar({
+                      additionalNodes: [...(config.allstar.additionalNodes || []), nextNode],
+                    });
+                  }}
+                  className="min-h-[38px] px-3.5 py-1.5 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                  Add Node
+                </button>
+              </div>
+
+              {(config.allstar.additionalNodes || []).length === 0 ? (
+                <div className="p-4 rounded-md border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+                  No additional nodes configured. Click <strong>Add Node</strong> to host extra public nodes, private hubs, or secondary USB radio interfaces on this server.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {(config.allstar.additionalNodes || []).map((extra, idx) => {
+                    const updateExtra = (patch: Partial<ExtraAllStarNode>) => {
+                      const nextList = (config.allstar.additionalNodes || []).map((item) =>
+                        item.id === extra.id ? { ...item, ...patch } : item
+                      );
+                      updateAllstar({ additionalNodes: nextList });
+                    };
+                    const removeExtra = () => {
+                      updateAllstar({
+                        additionalNodes: (config.allstar.additionalNodes || []).filter(
+                          (item) => item.id !== extra.id
+                        ),
+                      });
+                    };
+
+                    return (
+                      <div
+                        key={extra.id}
+                        className="p-4 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 space-y-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 font-mono">
+                            Additional Node #{idx + 1}
+                            {extra.nodeNumber ? ` — [${extra.nodeNumber}]` : ''}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={removeExtra}
+                            className="text-xs font-medium text-red-600 dark:text-red-400 hover:underline inline-flex items-center gap-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                            Delete Node
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div>
+                            <label className={labelCls}>Node Number (4-6 digits)</label>
+                            <input
+                              type="text"
+                              value={extra.nodeNumber}
+                              onChange={(e) =>
+                                updateExtra({
+                                  nodeNumber: e.target.value.replace(/\D/g, '').slice(0, 6),
+                                })
+                              }
+                              className={`${inputCls} font-mono tabular-nums`}
+                              placeholder="e.g. 55554 or 1998"
+                            />
+                          </div>
+                          <div>
+                            <label className={labelCls}>IAX Registration Password</label>
+                            <input
+                              type={showAslPass ? 'text' : 'password'}
+                              value={extra.nodePassword}
+                              onChange={(e) => updateExtra({ nodePassword: e.target.value })}
+                              className={`${inputCls} font-mono`}
+                              placeholder="Blank for private node"
+                            />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Label / Description</label>
+                            <input
+                              type="text"
+                              value={extra.description}
+                              onChange={(e) => updateExtra({ description: e.target.value })}
+                              className={inputCls}
+                              placeholder="e.g. UHF Hub or Private Link"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                          <div>
+                            <label className={labelCls}>Audio Driver</label>
+                            <select
+                              value={extra.radioInterface}
+                              onChange={(e) =>
+                                updateExtra({
+                                  radioInterface: e.target.value as ExtraAllStarNode['radioInterface'],
+                                })
+                              }
+                              className={inputCls}
+                            >
+                              <option value="pseudo">DAHDI Pseudo (Hub / Radioless)</option>
+                              <option value="simpleusb">SimpleUSB (usb_{extra.nodeNumber || 'node'})</option>
+                              <option value="usbradio">USBRadio (usb_{extra.nodeNumber || 'node'})</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className={labelCls}>Duplex Mode</label>
+                            <select
+                              value={extra.duplexMode}
+                              onChange={(e) =>
+                                updateExtra({
+                                  duplexMode: e.target.value as ExtraAllStarNode['duplexMode'],
+                                })
+                              }
+                              className={inputCls}
+                            >
+                              <option value="0">0 — Half-Duplex (No Telem)</option>
+                              <option value="1">1 — Simplex w/ Telemetry</option>
+                              <option value="2">2 — Full-Duplex Repeater</option>
+                              <option value="3">3 — Full-Duplex (No Repeat)</option>
+                              <option value="4">4 — Autopatch</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className={labelCls}>CW ID Override</label>
+                            <input
+                              type="text"
+                              value={extra.cwIdString}
+                              onChange={(e) =>
+                                updateExtra({ cwIdString: e.target.value.toUpperCase() })
+                              }
+                              className={`${inputCls} font-mono`}
+                              placeholder="Defaults to primary"
+                            />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Startup Auto-Connect</label>
+                            <input
+                              type="text"
+                              value={extra.autoConnectNode}
+                              onChange={(e) =>
+                                updateExtra({
+                                  autoConnectNode: e.target.value.replace(/\D/g, '').slice(0, 6),
+                                })
+                              }
+                              className={`${inputCls} font-mono tabular-nums`}
+                              placeholder="Optional node #"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </>
         )}
@@ -1694,6 +1882,7 @@ export function WizardForms({
               localNode={localNode}
               onJumpToStep={onStepChange}
               onSwitchView={onSwitchView}
+              onLoadConfigFromHost={onLoadConfigFromHost}
             />
 
             {!localNode.localNodeAvailable && errorCount > 0 && (

@@ -100,6 +100,53 @@ export function validateNodeConfig(config: NodeConfiguration): ValidationIssue[]
     });
   }
 
+  // Additional AllStarLink nodes validation
+  const seenNodes = new Set<string>();
+  if (nodeNum) seenNodes.add(nodeNum);
+  const extraNodes = Array.isArray(config.allstar.additionalNodes)
+    ? config.allstar.additionalNodes
+    : [];
+  extraNodes.forEach((extra, idx) => {
+    const num = (extra.nodeNumber || '').trim();
+    if (!/^\d{4,6}$/.test(num)) {
+      issues.push({
+        id: `extra-node-format-${extra.id}`,
+        severity: 'error',
+        step: 2,
+        field: `additionalNodes.${idx}.nodeNumber`,
+        message: `Additional Node #${idx + 1} must be a 4 to 6 digit node number.`,
+      });
+    } else if (seenNodes.has(num)) {
+      issues.push({
+        id: `extra-node-dup-${extra.id}`,
+        severity: 'error',
+        step: 2,
+        field: `additionalNodes.${idx}.nodeNumber`,
+        message: `Node ${num} is duplicated. Every AllStarLink node on this host must have a unique number.`,
+      });
+    } else {
+      seenNodes.add(num);
+      if (Number(num) >= 2000 && !(extra.nodePassword || '').trim()) {
+        issues.push({
+          id: `extra-node-pass-${extra.id}`,
+          severity: 'warning',
+          step: 2,
+          field: `additionalNodes.${idx}.nodePassword`,
+          message: `Additional public node ${num} has no IAX registration password set.`,
+        });
+      }
+    }
+    if (extra.autoConnectNode && !/^\d{4,6}$/.test(extra.autoConnectNode.trim())) {
+      issues.push({
+        id: `extra-node-autoconnect-${extra.id}`,
+        severity: 'error',
+        step: 2,
+        field: `additionalNodes.${idx}.autoConnectNode`,
+        message: `Additional node ${num || `#${idx + 1}`} has an invalid auto-connect node number.`,
+      });
+    }
+  });
+
   // DVSwitch checks
   if (config.dvswitch.enabled) {
     if (config.dvswitch.bridgeArch === 'private-node') {
@@ -112,13 +159,13 @@ export function validateNodeConfig(config: NodeConfiguration): ValidationIssue[]
           field: 'privateNodeNumber',
           message: 'Private DVSwitch bridge node number must be 4 to 6 digits (e.g. 1999).',
         });
-      } else if (priv === nodeNum) {
+      } else if (seenNodes.has(priv)) {
         issues.push({
           id: 'dvs-private-node-collision',
           severity: 'error',
           step: 3,
           field: 'privateNodeNumber',
-          message: 'Private bridge node number cannot be identical to your primary AllStarLink node number.',
+          message: 'Private bridge node number cannot collide with an existing AllStarLink node number.',
         });
       }
     }

@@ -25,8 +25,9 @@ PORT = int(os.environ.get("ASL_WEBGUI_PORT", "8080"))
 ADMIN_ENV_PASSWORD = os.environ.get("ASL_WEBGUI_ADMIN_PASSWORD", "").strip()
 STATE_DIR = "/etc/allstarlink-webgui"
 ADMIN_HASH_FILE = os.path.join(STATE_DIR, "admin.hash")
+SAVED_CONFIG_FILE = os.path.join(STATE_DIR, "node-config.json")
 INSTALL_LOG_FILE = "/var/log/asl-dvswitch-install.log"
-MAX_BODY_BYTES = 65536
+MAX_BODY_BYTES = 131072
 SESSION_TTL_SECONDS = 8 * 3600
 
 SERVICES = [
@@ -251,6 +252,57 @@ def validate_and_sanitize_config(raw: object) -> dict:
     hang_ms = _in_range_int(a.get("hangTimeMs", 100), 0, 30000)
     tx_timeout_ms = _in_range_int(a.get("txTimeoutMs", 180000), 10000, 600000)
 
+    seen_nodes = {node_num}
+    raw_extra = a.get("additionalNodes", [])
+    if not isinstance(raw_extra, list):
+        raise ValueError("additionalNodes must be a list.")
+    if len(raw_extra) > 16:
+        raise ValueError("Maximum 16 additional AllStarLink nodes supported per host.")
+
+    additional_nodes: list[dict] = []
+    for idx, item in enumerate(raw_extra):
+        if not isinstance(item, dict):
+            raise ValueError(f"Additional node #{idx + 1} must be an object.")
+        ex_num = str(item.get("nodeNumber", "")).strip()
+        if not re.fullmatch(r"\d{4,6}", ex_num):
+            raise ValueError(f"Additional node #{idx + 1} number must be 4 to 6 digits.")
+        if ex_num in seen_nodes:
+            raise ValueError(f"Duplicate node number: {ex_num}.")
+        seen_nodes.add(ex_num)
+        ex_pass = str(item.get("nodePassword", "")).strip()
+        if not _is_single_line_safe(ex_pass, 128):
+            raise ValueError(f"Invalid password for node {ex_num}.")
+        ex_desc = str(item.get("description", "")).strip()
+        if not _is_single_line_safe(ex_desc, 80):
+            raise ValueError(f"Invalid description for node {ex_num}.")
+        ex_duplex = str(item.get("duplexMode", "1"))
+        if ex_duplex not in {"0", "1", "2", "3", "4"}:
+            raise ValueError(f"Invalid duplex mode for node {ex_num}.")
+        ex_iface = str(item.get("radioInterface", "pseudo"))
+        if ex_iface not in {"simpleusb", "usbradio", "pseudo"}:
+            raise ValueError(f"Invalid radio interface for node {ex_num}.")
+        ex_cw = str(item.get("cwIdString", "")).strip().upper()
+        if not re.fullmatch(r"[A-Z0-9/ -]{0,24}", ex_cw):
+            raise ValueError(f"Invalid CW ID for node {ex_num}.")
+        ex_hang = _in_range_int(item.get("hangTimeMs", 100), 0, 30000)
+        ex_auto = str(item.get("autoConnectNode", "")).strip()
+        if not re.fullmatch(r"(\d{4,6})?", ex_auto):
+            raise ValueError(f"Invalid auto-connect node for node {ex_num}.")
+        ex_id = str(item.get("id", f"node-{ex_num}")).strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,48}", ex_id):
+            ex_id = f"node-{ex_num}"
+        additional_nodes.append({
+            "id": ex_id,
+            "nodeNumber": ex_num,
+            "nodePassword": ex_pass,
+            "description": ex_desc,
+            "duplexMode": ex_duplex,
+            "radioInterface": ex_iface,
+            "cwIdString": ex_cw,
+            "hangTimeMs": ex_hang,
+            "autoConnectNode": ex_auto,
+        })
+
     # DVSwitch validation
     dvs_enabled = bool(d.get("enabled", False))
     dvs_arch = str(d.get("bridgeArch", "private-node"))
@@ -282,8 +334,8 @@ def validate_and_sanitize_config(raw: object) -> dict:
 
     if dvs_enabled:
         if dvs_arch == "private-node":
-            if not re.fullmatch(r"\d{4,6}", priv_node) or priv_node == node_num:
-                raise ValueError("DVSwitch private node must be 4-6 digits and distinct from primary node.")
+            if not re.fullmatch(r"\d{4,6}", priv_node) or priv_node in seen_nodes:
+                raise ValueError("DVSwitch private node must be 4-6 digits and distinct from all AllStarLink nodes.")
         if not re.fullmatch(r"\d{7}", dvs_dmr_id):
             raise ValueError("DVSwitch DMR ID must be 7 digits.")
         if not re.fullmatch(r"\d{2}", dvs_suffix):
@@ -389,6 +441,7 @@ def validate_and_sanitize_config(raw: object) -> dict:
             "amiSecret": ami_secret,
             "autoConnectNode": auto_connect,
             "startupConnectDvSwitch": bool(a.get("startupConnectDvSwitch", True)),
+            "additionalNodes": additional_nodes,
         },
         "dvswitch": {
             "enabled": dvs_enabled,
@@ -524,6 +577,65 @@ def _write_asterisk_configs(cfg: dict) -> None:
         startup_macros.append(f"*3{priv}")
     startup_line = f"startup_macro = {' '.join(startup_macros)}" if startup_macros else "; startup_macro ="
 
+    extra_nodes = a.get("additionalNodes", [])
+    extra_sections_list = []
+    extra_nodes_entries = []
+    extra_reg_lines = []
+    extra_ext_lines = []
+    extra_usb_sections = []
+    any_simpleusb = a["radioInterface"] == "simpleusb"
+    yn = lambda v: "yes" if v else "no"
+
+    for extra in extra_nodes:
+        en = extra["nodeNumber"]
+        e_cw = extra["cwIdString"] or cw_id
+        if extra["radioInterface"] == "usbradio":
+            e_rx = f"Radio/usb_{en}"
+        elif extra["radioInterface"] == "pseudo":
+            e_rx = "dahdi/pseudo"
+        else:
+            e_rx = f"SimpleUSB/usb_{en}"
+            any_simpleusb = True
+            extra_usb_sections.append(
+                f"\n[usb_{en}]\n"
+                "eeprom = 0\nhdwtype = 0\n"
+                f"rxboost = {yn(a['rxBoost'])}\n"
+                f"carrierfrom = {a['carrierFrom']}\n"
+                f"ctcssfrom = {a['ctcssFrom']}\n"
+                f"invertptt = {yn(a['pttInvert'])}\n"
+                f"plfilter = {yn(a['plFilter'])}\n"
+                f"deemphasis = {yn(a['deEmphasis'])}\n"
+                f"preemphasis = {yn(a['preEmphasis'])}\n"
+                f"txmixa = {a['txMixA']}\n"
+                "txmixb = no\nrxondelay = 0\ntxoffdelay = 0\n"
+            )
+        e_startup = f"startup_macro = *3{extra['autoConnectNode']}" if extra["autoConnectNode"] else "; startup_macro ="
+        e_desc = f" — {extra['description']}" if extra["description"] else ""
+        e_telem = "0" if extra["duplexMode"] == "0" else "1"
+        e_holdoff = "1" if extra["duplexMode"] == "0" else "0"
+        extra_sections_list.append(
+            f"\n; Additional Node {en}{e_desc}\n"
+            f"[{en}](node-main)\n"
+            f"rxchannel = {e_rx}\n"
+            f"duplex = {extra['duplexMode']}\n"
+            f"hangtime = {extra['hangTimeMs']}\n"
+            f"althangtime = {min(extra['hangTimeMs'], 100)}\n"
+            f"telemdefault = {e_telem}\n"
+            f"holdofftelem = {e_holdoff}\n"
+            f"idrecording = |i{e_cw}\n"
+            f"{e_startup}\n"
+        )
+        extra_nodes_entries.append(f"{en} = radio@127.0.0.1:{a['iaxPort']}/{en},NONE\n")
+        extra_ext_lines.append(f"exten => {en},1,rpt({en})\n")
+        if extra["nodePassword"]:
+            extra_reg_lines.append(f"register => {en}:{extra['nodePassword']}@{a['registrationServer']}")
+
+    extra_sections_str = "".join(extra_sections_list)
+    extra_nodes_str = "".join(extra_nodes_entries)
+    extra_reg_block = ("\n" + "\n".join(extra_reg_lines)) if extra_reg_lines else ""
+    extra_ext_str = "".join(extra_ext_lines)
+    extra_usb_str = "".join(extra_usb_sections)
+
     priv_section = ""
     if d["enabled"] and d["bridgeArch"] == "private-node":
         priv_section = (
@@ -592,7 +704,7 @@ rxchannel = {rx_channel}
 duplex = {a['duplexMode']}
 idrecording = |i{cw_id}
 {startup_line}
-{priv_section}
+{extra_sections_str}{priv_section}
 [functions{node}]
 1 = ilink,1
 2 = ilink,2
@@ -643,12 +755,18 @@ calltermwait = 2000
 
 [nodes]
 {node} = radio@127.0.0.1:{a['iaxPort']}/{node},NONE
-{priv_node_entry}
+{extra_nodes_str}{priv_node_entry}
 [memory]
 
 [macro]
 1 = *71#
 """
+
+    primary_reg_line = (
+        f"register => {node}:{a['nodePassword']}@{a['registrationServer']}"
+        if a["nodePassword"]
+        else f"; register => {node}:<PASSWORD>@{a['registrationServer']}"
+    )
 
     iax_conf = f"""; /etc/asterisk/iax.conf — AllStarLink Guided Install WebGUI
 [general]
@@ -672,7 +790,7 @@ tos = ef
 autokill = yes
 delayreject = yes
 
-register => {node}:{a['nodePassword']}@{a['registrationServer']}
+{primary_reg_line}{extra_reg_block}
 
 [radio-proxy]
 type = user
@@ -719,7 +837,7 @@ NODE = {node}
 
 [radio-secure]
 exten => {node},1,rpt({node})
-{priv_ext}exten => _X.,1,Wait(1)
+{extra_ext_str}{priv_ext}exten => _X.,1,Wait(1)
 exten => _X.,n,Hangup
 
 [allstar-public]
@@ -737,7 +855,6 @@ exten => _NXXXXXX,1,Goto(check_route,${{EXTEN}},1)
 exten => _1NXXNXXXXXX,1,Goto(check_route,${{EXTEN}},1)
 """
 
-    yn = lambda v: "yes" if v else "no"
     simpleusb_conf = f"""; /etc/asterisk/simpleusb.conf — AllStarLink Guided Install WebGUI
 [general]
 
@@ -755,7 +872,7 @@ txmixa = {a['txMixA']}
 txmixb = no
 rxondelay = 0
 txoffdelay = 0
-"""
+{extra_usb_str}"""
 
     manager_conf = f"""; /etc/asterisk/manager.conf — AllStarLink Guided Install WebGUI
 [general]
@@ -790,7 +907,7 @@ permit = 127.0.0.1/255.255.255.0
         additions = []
         if d["enabled"] and "chan_usrp.so" not in mod_text:
             additions.append("load = chan_usrp.so\n")
-        if a["radioInterface"] == "simpleusb" and "chan_simpleusb.so" not in mod_text:
+        if any_simpleusb and "chan_simpleusb.so" not in mod_text:
             additions.append("load = chan_simpleusb.so\n")
         if additions:
             with open(modules_path, "a", encoding="utf-8") as fh:
@@ -1408,6 +1525,8 @@ def _run_install_worker(cfg: dict) -> None:
             _run_cmd(["apt-get", "install", "-y", "unattended-upgrades"], check=False)
             _run_cmd(["dpkg-reconfigure", "-f", "noninteractive", "unattended-upgrades"], check=False)
 
+        _save_node_config(cfg)
+
         _run_cmd(["systemctl", "enable", "--now", "asterisk.service"])
         _run_cmd(["systemctl", "restart", "asterisk.service"])
         time.sleep(2)
@@ -1415,6 +1534,109 @@ def _run_install_worker(cfg: dict) -> None:
 
         _append_log("========================================================================")
         _append_log(f" Installation Complete — Node {a['nodeNumber']} ({a['callsign']})")
+        _append_log("========================================================================")
+
+        with install_lock:
+            install_state["status"] = "succeeded"
+            install_state["exitCode"] = 0
+            install_state["finishedAt"] = _now_iso()
+    except Exception as exc:
+        _append_log(f"[ERROR] {exc}")
+        with install_lock:
+            install_state["status"] = "failed"
+            install_state["exitCode"] = 1
+            install_state["error"] = str(exc)
+            install_state["finishedAt"] = _now_iso()
+
+
+def _save_node_config(cfg: dict) -> None:
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    tmp_path = SAVED_CONFIG_FILE + ".tmp"
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh, indent=2)
+    os.replace(tmp_path, SAVED_CONFIG_FILE)
+    _append_log(f"[INFO] Saved node configuration to {SAVED_CONFIG_FILE}")
+
+
+def _load_node_config() -> dict | None:
+    if not os.path.isfile(SAVED_CONFIG_FILE):
+        return None
+    try:
+        with open(SAVED_CONFIG_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _detect_rpt_nodes() -> list[str]:
+    rpt_path = "/etc/asterisk/rpt.conf"
+    if not os.path.isfile(rpt_path):
+        return []
+    found: list[str] = []
+    try:
+        with open(rpt_path, "r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                m = re.match(r"^\s*\[(\d{4,6})\]", line)
+                if m and m.group(1) not in found:
+                    found.append(m.group(1))
+    except OSError:
+        pass
+    return found
+
+
+def _run_apply_config_worker(cfg: dict) -> None:
+    a = cfg["allstar"]
+    d = cfg["dvswitch"]
+    m = cfg["mmdvmhost"]
+    p = cfg["platform"]
+
+    try:
+        # 1. Save config & write Asterisk configs (NO package installation)
+        _set_step(1, "Write AllStarLink Node Config Files")
+        _save_node_config(cfg)
+        _run_cmd(["hostnamectl", "set-hostname", p["hostname"]], check=False)
+        try:
+            hosts_text = Path("/etc/hosts").read_text(encoding="utf-8") if os.path.isfile("/etc/hosts") else ""
+            if not re.search(rf"\s{re.escape(p['hostname'])}(\s|$)", hosts_text):
+                with open("/etc/hosts", "a", encoding="utf-8") as fh:
+                    fh.write(f"127.0.1.1 {p['hostname']}\n")
+        except OSError:
+            pass
+        _run_cmd(["timedatectl", "set-timezone", p["timezone"]], check=False)
+        _write_asterisk_configs(cfg)
+
+        # 2. Write DVSwitch & MMDVMHost configs if enabled (without reinstalling)
+        _set_step(2, "Write DVSwitch & MMDVMHost Config Files")
+        if d["enabled"]:
+            _write_dvswitch_configs(cfg)
+        else:
+            _append_log("[INFO] DVSwitch disabled in config; skipping DVSwitch .ini write.")
+        if m["enabled"]:
+            os.makedirs("/etc/mmdvm", exist_ok=True)
+            os.makedirs("/var/log/mmdvm", exist_ok=True)
+            _write_mmdvmhost_config(cfg)
+        else:
+            _append_log("[INFO] MMDVMHost disabled in config; skipping MMDVM.ini write.")
+
+        # 3. Reload / restart services
+        _set_step(3, "Restart Configured Services")
+        _run_cmd(["systemctl", "restart", "asterisk.service"])
+        if d["enabled"]:
+            for svc in ("md380-emu.service", "analog_bridge.service", "mmdvm_bridge.service"):
+                _run_cmd(["systemctl", "restart", svc], check=False)
+        if m["enabled"]:
+            _run_cmd(["systemctl", "daemon-reload"], check=False)
+            _run_cmd(["systemctl", "restart", "mmdvmhost.service"], check=False)
+
+        time.sleep(2)
+        all_nodes = [a["nodeNumber"]] + [n["nodeNumber"] for n in a.get("additionalNodes", [])]
+        for node_id in all_nodes:
+            _run_cmd(["asterisk", "-rx", f"rpt nodes {node_id}"], check=False)
+
+        _append_log("========================================================================")
+        _append_log(f" Config Applied & Services Reloaded — Nodes: {', '.join(all_nodes)}")
         _append_log("========================================================================")
 
         with install_lock:
@@ -1488,6 +1710,18 @@ class WebGuiHandler(http.server.SimpleHTTPRequestHandler):
                 "localNodeAvailable": True,
                 "hostname": socket.gethostname(),
                 "services": services,
+                "detectedNodes": _detect_rpt_nodes(),
+                "hasSavedConfig": os.path.isfile(SAVED_CONFIG_FILE),
+            })
+            return
+
+        if path == "/api/config":
+            if not _validate_bearer(self.headers.get("Authorization")):
+                self._send_json(401, {"error": "Authentication required."})
+                return
+            self._send_json(200, {
+                "config": _load_node_config(),
+                "detectedNodes": _detect_rpt_nodes(),
             })
             return
 
@@ -1567,6 +1801,111 @@ class WebGuiHandler(http.server.SimpleHTTPRequestHandler):
                 with auth_lock:
                     sessions.pop(token, None)
             self._send_json(200, {"ok": True})
+            return
+
+        if path == "/api/apply-config":
+            if not _validate_bearer(self.headers.get("Authorization")):
+                self._send_json(401, {"error": "Authentication required."})
+                return
+            if os.geteuid() != 0:
+                self._send_json(403, {"error": "WebGUI service must run as root to write node configs."})
+                return
+            try:
+                body = self._read_json_body()
+                validated = validate_and_sanitize_config(body.get("config"))
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+
+            with install_lock:
+                if install_state["status"] == "running":
+                    self._send_json(409, {"error": "Another operation is already in progress."})
+                    return
+                install_state.update({
+                    "status": "running",
+                    "step": "Applying configuration changes (no package reinstall)...",
+                    "stepIndex": 0,
+                    "totalSteps": 3,
+                    "startedAt": _now_iso(),
+                    "finishedAt": None,
+                    "exitCode": None,
+                    "error": None,
+                    "logs": [f"[{_now_iso()}] Applying config-only update on {socket.gethostname()}..."],
+                })
+
+            worker = threading.Thread(target=_run_apply_config_worker, args=(validated,), daemon=True)
+            worker.start()
+            self._send_json(202, {"status": "running"})
+            return
+
+        if path == "/api/service":
+            if not _validate_bearer(self.headers.get("Authorization")):
+                self._send_json(401, {"error": "Authentication required."})
+                return
+            if os.geteuid() != 0:
+                self._send_json(403, {"error": "WebGUI service must run as root to manage services."})
+                return
+            try:
+                body = self._read_json_body()
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            svc = str(body.get("service", "")).strip()
+            action = str(body.get("action", "")).strip()
+            if svc not in SERVICES:
+                self._send_json(400, {"error": "Unknown service unit."})
+                return
+            if action not in {"start", "stop", "restart"}:
+                self._send_json(400, {"error": "Invalid service action."})
+                return
+            proc = subprocess.run(["systemctl", action, f"{svc}.service"], capture_output=True, text=True)
+            state_proc = subprocess.run(["systemctl", "is-active", svc], capture_output=True, text=True)
+            self._send_json(200 if proc.returncode == 0 else 500, {
+                "ok": proc.returncode == 0,
+                "service": svc,
+                "state": state_proc.stdout.strip() or "inactive",
+                "error": (proc.stderr.strip() or proc.stdout.strip()) if proc.returncode != 0 else None,
+            })
+            return
+
+        if path == "/api/asl/command":
+            if not _validate_bearer(self.headers.get("Authorization")):
+                self._send_json(401, {"error": "Authentication required."})
+                return
+            if os.geteuid() != 0:
+                self._send_json(403, {"error": "WebGUI service must run as root to send Asterisk commands."})
+                return
+            try:
+                body = self._read_json_body()
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            node_id = str(body.get("node", "")).strip()
+            action = str(body.get("action", "")).strip()
+            target = str(body.get("target", "")).strip()
+            if not re.fullmatch(r"\d{4,6}", node_id):
+                self._send_json(400, {"error": "Invalid local node number."})
+                return
+            if action in {"connect", "monitor", "disconnect"}:
+                if not re.fullmatch(r"\d{4,6}", target):
+                    self._send_json(400, {"error": "Target node number must be 4 to 6 digits."})
+                    return
+                prefix = {"connect": "*3", "monitor": "*2", "disconnect": "*1"}[action]
+                rx_cmd = f"rpt fun {node_id} {prefix}{target}"
+            elif action == "disconnect_all":
+                rx_cmd = f"rpt fun {node_id} *71"
+            elif action == "nodes":
+                rx_cmd = f"rpt nodes {node_id}"
+            else:
+                self._send_json(400, {"error": "Invalid Asterisk action."})
+                return
+            proc = subprocess.run(["asterisk", "-rx", rx_cmd], capture_output=True, text=True)
+            output = (proc.stdout + "\n" + proc.stderr).strip()
+            self._send_json(200 if proc.returncode == 0 else 500, {
+                "ok": proc.returncode == 0,
+                "command": rx_cmd,
+                "output": output or "Command executed.",
+            })
             return
 
         if path == "/api/install":

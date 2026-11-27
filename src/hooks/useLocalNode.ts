@@ -13,6 +13,9 @@ export interface InstallJobStatus {
   logs: string[];
 }
 
+export type ServiceAction = 'start' | 'stop' | 'restart';
+export type AslCommandAction = 'connect' | 'monitor' | 'disconnect' | 'disconnect_all' | 'nodes';
+
 export interface LocalNodeController {
   checking: boolean;
   localNodeAvailable: boolean;
@@ -23,12 +26,30 @@ export interface LocalNodeController {
   authError: string | null;
   authBusy: boolean;
   liveServices: Record<string, string> | null;
+  detectedNodes: string[];
+  hasSavedConfig: boolean;
   installJob: InstallJobStatus;
   refreshNode: () => Promise<void>;
   claimAdmin: (password: string) => Promise<boolean>;
   loginAdmin: (password: string) => Promise<boolean>;
   logoutAdmin: () => Promise<void>;
   startInstall: (config: NodeConfiguration) => Promise<{ ok: boolean; error?: string }>;
+  applyConfig: (config: NodeConfiguration) => Promise<{ ok: boolean; error?: string }>;
+  loadSavedConfig: () => Promise<{
+    ok: boolean;
+    config?: Partial<NodeConfiguration> | null;
+    detectedNodes?: string[];
+    error?: string;
+  }>;
+  controlService: (
+    service: string,
+    action: ServiceAction
+  ) => Promise<{ ok: boolean; state?: string; error?: string }>;
+  runAslCommand: (
+    node: string,
+    action: AslCommandAction,
+    target?: string
+  ) => Promise<{ ok: boolean; output?: string; error?: string }>;
 }
 
 const INITIAL_JOB: InstallJobStatus = {
@@ -53,6 +74,8 @@ export function useLocalNode(): LocalNodeController {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [liveServices, setLiveServices] = useState<Record<string, string> | null>(null);
+  const [detectedNodes, setDetectedNodes] = useState<string[]>([]);
+  const [hasSavedConfig, setHasSavedConfig] = useState(false);
   const [installJob, setInstallJob] = useState<InstallJobStatus>(INITIAL_JOB);
 
   const fetchInstallStatus = useCallback(async (activeToken: string) => {
@@ -105,10 +128,18 @@ export function useLocalNode(): LocalNodeController {
 
       const svcRes = await fetch('/api/status');
       if (svcRes.ok) {
-        const svcData = (await svcRes.json()) as { services?: Record<string, string> };
+        const svcData = (await svcRes.json()) as {
+          services?: Record<string, string>;
+          detectedNodes?: string[];
+          hasSavedConfig?: boolean;
+        };
         if (svcData.services) {
           setLiveServices(svcData.services);
         }
+        if (Array.isArray(svcData.detectedNodes)) {
+          setDetectedNodes(svcData.detectedNodes);
+        }
+        setHasSavedConfig(Boolean(svcData.hasSavedConfig));
       }
     } catch {
       setLocalNodeAvailable(false);
@@ -206,7 +237,7 @@ export function useLocalNode(): LocalNodeController {
   const startInstall = useCallback(
     async (config: NodeConfiguration): Promise<{ ok: boolean; error?: string }> => {
       if (!token) {
-        return { ok: false, error: 'Unlock the local node installer first.' };
+        return { ok: false, error: 'Unlock the local node admin session first.' };
       }
       try {
         const res = await fetch('/api/install', {
@@ -231,6 +262,124 @@ export function useLocalNode(): LocalNodeController {
     [token, fetchInstallStatus]
   );
 
+  const applyConfig = useCallback(
+    async (config: NodeConfiguration): Promise<{ ok: boolean; error?: string }> => {
+      if (!token) {
+        return { ok: false, error: 'Unlock the local node admin session first.' };
+      }
+      try {
+        const res = await fetch('/api/apply-config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ config }),
+        });
+        const data = (await res.json()) as { status?: string; error?: string };
+        if (!res.ok) {
+          if (res.status === 401) setToken(null);
+          return { ok: false, error: data.error || 'Failed to apply configuration changes.' };
+        }
+        await fetchInstallStatus(token);
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Unable to communicate with local node server.' };
+      }
+    },
+    [token, fetchInstallStatus]
+  );
+
+  const loadSavedConfig = useCallback(async () => {
+    if (!token) {
+      return { ok: false, error: 'Unlock the local node admin session first.' };
+    }
+    try {
+      const res = await fetch('/api/config', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = (await res.json()) as {
+        config?: Partial<NodeConfiguration> | null;
+        detectedNodes?: string[];
+        error?: string;
+      };
+      if (!res.ok) {
+        if (res.status === 401) setToken(null);
+        return { ok: false, error: data.error || 'Failed to load saved config.' };
+      }
+      if (Array.isArray(data.detectedNodes)) {
+        setDetectedNodes(data.detectedNodes);
+      }
+      return { ok: true, config: data.config ?? null, detectedNodes: data.detectedNodes };
+    } catch {
+      return { ok: false, error: 'Unable to communicate with local node server.' };
+    }
+  }, [token]);
+
+  const controlService = useCallback(
+    async (
+      service: string,
+      action: ServiceAction
+    ): Promise<{ ok: boolean; state?: string; error?: string }> => {
+      if (!token) {
+        return { ok: false, error: 'Unlock the local node admin session first.' };
+      }
+      try {
+        const res = await fetch('/api/service', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ service, action }),
+        });
+        const data = (await res.json()) as { ok?: boolean; state?: string; error?: string };
+        if (!res.ok) {
+          if (res.status === 401) setToken(null);
+          return { ok: false, error: data.error || `Failed to ${action} ${service}.` };
+        }
+        if (data.state) {
+          setLiveServices((prev) => ({ ...(prev || {}), [service]: data.state! }));
+        }
+        return { ok: true, state: data.state };
+      } catch {
+        return { ok: false, error: 'Unable to communicate with local node server.' };
+      }
+    },
+    [token]
+  );
+
+  const runAslCommand = useCallback(
+    async (
+      node: string,
+      action: AslCommandAction,
+      target?: string
+    ): Promise<{ ok: boolean; output?: string; error?: string }> => {
+      if (!token) {
+        return { ok: false, error: 'Unlock the local node admin session first.' };
+      }
+      try {
+        const res = await fetch('/api/asl/command', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ node, action, target: target || '' }),
+        });
+        const data = (await res.json()) as { ok?: boolean; output?: string; error?: string };
+        if (!res.ok) {
+          if (res.status === 401) setToken(null);
+          return { ok: false, error: data.error || 'Asterisk command failed.' };
+        }
+        return { ok: true, output: data.output || '' };
+      } catch {
+        return { ok: false, error: 'Unable to communicate with local node server.' };
+      }
+    },
+    [token]
+  );
+
   return {
     checking,
     localNodeAvailable,
@@ -241,11 +390,17 @@ export function useLocalNode(): LocalNodeController {
     authError,
     authBusy,
     liveServices,
+    detectedNodes,
+    hasSavedConfig,
     installJob,
     refreshNode,
     claimAdmin,
     loginAdmin,
     logoutAdmin,
     startInstall,
+    applyConfig,
+    loadSavedConfig,
+    controlService,
+    runAslCommand,
   };
 }

@@ -17,6 +17,7 @@ interface InstallerViewProps {
   localNode: LocalNodeController;
   onJumpToStep: (step: WizardStep) => void;
   onSwitchView: (view: WorkspaceView) => void;
+  onLoadConfigFromHost: (saved: Partial<NodeConfiguration>) => void;
 }
 
 type InstallerArtifact = 'node' | 'github' | 'readme';
@@ -27,6 +28,7 @@ export function InstallerView({
   localNode,
   onJumpToStep,
   onSwitchView,
+  onLoadConfigFromHost,
 }: InstallerViewProps) {
   const [artifact, setArtifact] = useState<InstallerArtifact>('node');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -79,6 +81,7 @@ export function InstallerView({
         localNode={localNode}
         onJumpToStep={onJumpToStep}
         onSwitchView={onSwitchView}
+        onLoadConfigFromHost={onLoadConfigFromHost}
       />
 
       {/* Artifact Switcher + Primary Download */}

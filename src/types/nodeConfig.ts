@@ -47,6 +47,18 @@ export interface PlatformConfig {
   dashboardBindAll: boolean;
 }
 
+export interface ExtraAllStarNode {
+  id: string;
+  nodeNumber: string;
+  nodePassword: string;
+  description: string;
+  duplexMode: DuplexMode;
+  radioInterface: RadioInterfaceType;
+  cwIdString: string;
+  hangTimeMs: number;
+  autoConnectNode: string;
+}
+
 export interface AllStarConfig {
   nodeNumber: string;
   callsign: string;
@@ -73,6 +85,7 @@ export interface AllStarConfig {
   amiSecret: string;
   autoConnectNode: string;
   startupConnectDvSwitch: boolean;
+  additionalNodes: ExtraAllStarNode[];
 }
 
 export interface DvSwitchConfig {

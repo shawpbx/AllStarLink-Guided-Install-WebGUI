@@ -60,7 +60,13 @@ export default function App() {
             githubRepo:
               parsed.platform?.githubRepo || DEFAULT_NODE_CONFIG.platform.githubRepo,
           },
-          allstar: { ...DEFAULT_NODE_CONFIG.allstar, ...(parsed.allstar || {}) },
+          allstar: {
+            ...DEFAULT_NODE_CONFIG.allstar,
+            ...(parsed.allstar || {}),
+            additionalNodes: Array.isArray(parsed.allstar?.additionalNodes)
+              ? parsed.allstar.additionalNodes
+              : [],
+          },
           dvswitch: { ...DEFAULT_NODE_CONFIG.dvswitch, ...(parsed.dvswitch || {}) },
           mmdvmhost: { ...DEFAULT_NODE_CONFIG.mmdvmhost, ...(parsed.mmdvmhost || {}) },
           security: { ...DEFAULT_NODE_CONFIG.security, ...(parsed.security || {}) },
@@ -124,6 +130,28 @@ export default function App() {
     );
   };
 
+  const handleLoadConfigFromHost = (saved: Partial<NodeConfiguration>) => {
+    setConfig((prev) => ({
+      platform: {
+        ...DEFAULT_NODE_CONFIG.platform,
+        ...prev.platform,
+        ...(saved.platform || {}),
+      },
+      allstar: {
+        ...DEFAULT_NODE_CONFIG.allstar,
+        ...(saved.allstar || {}),
+        additionalNodes: Array.isArray(saved.allstar?.additionalNodes)
+          ? saved.allstar.additionalNodes
+          : [],
+      },
+      dvswitch: { ...DEFAULT_NODE_CONFIG.dvswitch, ...(saved.dvswitch || {}) },
+      mmdvmhost: { ...DEFAULT_NODE_CONFIG.mmdvmhost, ...(saved.mmdvmhost || {}) },
+      security: { ...DEFAULT_NODE_CONFIG.security, ...(saved.security || {}) },
+    }));
+    setProfileNotice('Loaded saved node configuration from host.');
+    setTimeout(() => setProfileNotice(null), 2500);
+  };
+
   const handleImportProfile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -134,7 +162,13 @@ export default function App() {
         if (parsed.platform && parsed.allstar && parsed.dvswitch && parsed.security) {
           setConfig({
             platform: { ...DEFAULT_NODE_CONFIG.platform, ...parsed.platform },
-            allstar: { ...DEFAULT_NODE_CONFIG.allstar, ...parsed.allstar },
+            allstar: {
+              ...DEFAULT_NODE_CONFIG.allstar,
+              ...parsed.allstar,
+              additionalNodes: Array.isArray(parsed.allstar.additionalNodes)
+                ? parsed.allstar.additionalNodes
+                : [],
+            },
             dvswitch: { ...DEFAULT_NODE_CONFIG.dvswitch, ...parsed.dvswitch },
             mmdvmhost: { ...DEFAULT_NODE_CONFIG.mmdvmhost, ...(parsed.mmdvmhost || {}) },
             security: { ...DEFAULT_NODE_CONFIG.security, ...parsed.security },
@@ -355,6 +389,8 @@ export default function App() {
             config={config}
             issues={issues}
             localNode={localNode}
+            onChange={setConfig}
+            onLoadConfigFromHost={handleLoadConfigFromHost}
             onSwitchView={setView}
             onJumpToStep={setStep}
           />
@@ -411,6 +447,7 @@ export default function App() {
                 onChange={setConfig}
                 onStepChange={setStep}
                 onSwitchView={setView}
+                onLoadConfigFromHost={handleLoadConfigFromHost}
               />
             </section>
 
@@ -441,6 +478,7 @@ export default function App() {
             localNode={localNode}
             onJumpToStep={setStep}
             onSwitchView={setView}
+            onLoadConfigFromHost={handleLoadConfigFromHost}
           />
         )}
       </main>

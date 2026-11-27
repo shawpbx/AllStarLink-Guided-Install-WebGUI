@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
+  DownloadCloud,
   Eye,
   EyeOff,
   Loader2,
   Lock,
   Play,
   RefreshCw,
+  Save,
   ShieldCheck,
   Terminal,
 } from 'lucide-react';
@@ -20,6 +22,7 @@ interface DirectInstallPanelProps {
   localNode: LocalNodeController;
   onJumpToStep: (step: WizardStep) => void;
   onSwitchView: (view: WorkspaceView) => void;
+  onLoadConfigFromHost?: (saved: Partial<NodeConfiguration>) => void;
 }
 
 export function DirectInstallPanel({
@@ -28,17 +31,22 @@ export function DirectInstallPanel({
   localNode,
   onJumpToStep,
   onSwitchView,
+  onLoadConfigFromHost,
 }: DirectInstallPanelProps) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [localNotice, setLocalNotice] = useState<string | null>(null);
+  const [starting, setStarting] = useState<'install' | 'apply' | null>(null);
+  const [loadingHostCfg, setLoadingHostCfg] = useState(false);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
 
   const errors = issues.filter((i) => i.severity === 'error');
   const { installJob } = localNode;
   const isRunning = installJob.status === 'running';
+  const totalNodes =
+    1 + (Array.isArray(config.allstar.additionalNodes) ? config.allstar.additionalNodes.length : 0);
 
   useEffect(() => {
     if (logBoxRef.current) {
@@ -71,12 +79,44 @@ export function DirectInstallPanel({
 
   const handleStartInstall = async () => {
     if (errors.length > 0 || isRunning) return;
-    setStarting(true);
+    setStarting('install');
     setLocalError(null);
+    setLocalNotice(null);
     const result = await localNode.startInstall(config);
-    setStarting(false);
+    setStarting(null);
     if (!result.ok && result.error) {
       setLocalError(result.error);
+    }
+  };
+
+  const handleApplyConfigOnly = async () => {
+    if (errors.length > 0 || isRunning) return;
+    setStarting('apply');
+    setLocalError(null);
+    setLocalNotice(null);
+    const result = await localNode.applyConfig(config);
+    setStarting(null);
+    if (!result.ok && result.error) {
+      setLocalError(result.error);
+    }
+  };
+
+  const handleLoadSaved = async () => {
+    if (!onLoadConfigFromHost) return;
+    setLoadingHostCfg(true);
+    setLocalError(null);
+    setLocalNotice(null);
+    const res = await localNode.loadSavedConfig();
+    setLoadingHostCfg(false);
+    if (!res.ok) {
+      setLocalError(res.error || 'Could not load saved config from host.');
+      return;
+    }
+    if (res.config) {
+      onLoadConfigFromHost(res.config);
+      setLocalNotice('Loaded saved node configuration from /etc/allstarlink-webgui/node-config.json.');
+    } else {
+      setLocalNotice('No saved node-config.json on this host yet. Apply config or run install to save one.');
     }
   };
 
@@ -100,10 +140,10 @@ export function DirectInstallPanel({
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-              Direct On-Node Execution
+              Direct On-Node Execution &amp; Live Config Updates
             </h3>
             <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
-              This WebGUI is currently open in remote configurator mode. When hosted on your Raspberry Pi or Debian 13 node via the GitHub installer (<span className="font-mono">install.sh</span>), you can execute the full AllStarLink 3, DVSwitch, and MMDVMHost installation directly from this page with live log streaming.
+              This WebGUI is currently open in remote configurator mode. When hosted on your Raspberry Pi or Debian 13 node via the GitHub installer (<span className="font-mono">install.sh</span>), you can run a full first-time install or push config-only updates (add/delete nodes, tweak settings, reload Asterisk) directly from this page without reinstalling packages.
             </p>
           </div>
           <button
@@ -119,6 +159,11 @@ export function DirectInstallPanel({
     );
   }
 
+  const pctSteps =
+    installJob.totalSteps > 0
+      ? Math.min(6, Math.round((installJob.stepIndex / installJob.totalSteps) * 6))
+      : 0;
+
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-6 space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap pb-4 border-b border-slate-100 dark:border-slate-800">
@@ -128,23 +173,40 @@ export function DirectInstallPanel({
             <span>Connected to Local Node ({localNode.hostname || 'localhost'})</span>
           </div>
           <h3 className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
-            Execute Installation Directly on This Computer
+            Apply Config Changes or Run Full Install on This Node
           </h3>
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-            Applies your configured AllStarLink 3{config.dvswitch.enabled ? ', DVSwitch Server' : ''}{config.mmdvmhost.enabled ? ', and MMDVMHost' : ''} settings directly to this host without downloading or transferring a shell script.
+            Use <strong>Apply Config Only</strong> to update config files (add/delete nodes, edit settings) and reload services in seconds without reinstalling packages, or <strong>Full Install</strong> on a fresh system.
           </p>
         </div>
 
         {localNode.authenticated && (
-          <button
-            type="button"
-            onClick={() => localNode.logoutAdmin()}
-            disabled={isRunning}
-            className="min-h-[38px] px-3.5 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
-          >
-            <Lock className="w-3.5 h-3.5" aria-hidden="true" />
-            Lock Session
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {onLoadConfigFromHost && localNode.hasSavedConfig && (
+              <button
+                type="button"
+                onClick={handleLoadSaved}
+                disabled={loadingHostCfg || isRunning}
+                className="min-h-[38px] px-3.5 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
+              >
+                {loadingHostCfg ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+                ) : (
+                  <DownloadCloud className="w-3.5 h-3.5" aria-hidden="true" />
+                )}
+                Load Saved Node Config
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => localNode.logoutAdmin()}
+              disabled={isRunning}
+              className="min-h-[38px] px-3.5 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
+            >
+              <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+              Lock Session
+            </button>
+          </div>
         )}
       </div>
 
@@ -154,13 +216,13 @@ export function DirectInstallPanel({
           <div>
             <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               {localNode.authConfigured
-                ? 'Unlock Local Node Installer'
-                : 'First-Run Setup: Create Local Installer Admin Password'}
+                ? 'Unlock Local Node Control'
+                : 'First-Run Setup: Create Local Admin Password'}
             </h4>
             <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
               {localNode.authConfigured
-                ? 'Enter your local WebGUI admin password to authorize root system changes on this node.'
-                : 'Set a local admin password (stored as a salted scrypt hash on this host) to protect direct node installation on your LAN.'}
+                ? 'Enter your local WebGUI admin password to apply config changes, manage services, or run installation on this host.'
+                : 'Set a local admin password (stored as a salted scrypt hash on this host) to protect direct node configuration on your LAN.'}
             </p>
           </div>
 
@@ -226,7 +288,7 @@ export function DirectInstallPanel({
             className="min-h-[40px] px-4 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-2 disabled:opacity-60"
           >
             {localNode.authBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />}
-            {localNode.authConfigured ? 'Unlock Local Installer' : 'Save Password & Unlock'}
+            {localNode.authConfigured ? 'Unlock Local Node' : 'Save Password & Unlock'}
           </button>
         </form>
       ) : (
@@ -237,7 +299,7 @@ export function DirectInstallPanel({
               <div className="flex items-center gap-2 text-xs font-semibold text-red-800 dark:text-red-300">
                 <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
                 <span>
-                  Complete {errors.length} required {errors.length === 1 ? 'field' : 'fields'} before running direct install:
+                  Complete {errors.length} required {errors.length === 1 ? 'field' : 'fields'} before applying changes:
                 </span>
               </div>
               <ul className="space-y-1 pl-6 list-disc text-xs text-red-700 dark:text-red-300">
@@ -262,6 +324,12 @@ export function DirectInstallPanel({
             </div>
           )}
 
+          {localNotice && (
+            <div className="p-3.5 rounded-md border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50 dark:bg-emerald-950/30 text-xs text-emerald-800 dark:text-emerald-300">
+              {localNotice}
+            </div>
+          )}
+
           {localError && (
             <div className="p-3.5 rounded-md border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/30 text-xs text-red-700 dark:text-red-300">
               {localError}
@@ -272,31 +340,52 @@ export function DirectInstallPanel({
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="space-y-0.5">
               <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                Target Plan: Node {config.allstar.nodeNumber || 'Unset'} ({config.allstar.callsign || 'Unset'})
+                Target Plan: {totalNodes} {totalNodes === 1 ? 'Node' : 'Nodes'} · Primary {config.allstar.nodeNumber || 'Unset'} ({config.allstar.callsign || 'Unset'})
               </div>
               <div className="text-xs text-slate-500 dark:text-slate-400">
                 AllStarLink 3 · {config.dvswitch.enabled ? `DVSwitch (${config.dvswitch.defaultMode})` : 'No DVSwitch'} · {config.mmdvmhost.enabled ? `MMDVMHost (${config.mmdvmhost.modemPort})` : 'No MMDVMHost'} · {config.security.enableUfw ? 'UFW Firewall' : 'UFW Skipped'}
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleStartInstall}
-              disabled={errors.length > 0 || isRunning || starting || !localNode.isRoot}
-              className="min-h-[42px] px-5 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-            >
-              {isRunning || starting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                  Installing on This Node...
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4" aria-hidden="true" />
-                  {installJob.status === 'idle' ? 'Run Install Now' : 'Re-Run Install'}
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <button
+                type="button"
+                onClick={handleApplyConfigOnly}
+                disabled={errors.length > 0 || isRunning || starting !== null || !localNode.isRoot}
+                className="min-h-[42px] px-4 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              >
+                {starting === 'apply' || (isRunning && installJob.totalSteps === 3) ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                    Applying Config...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" aria-hidden="true" />
+                    Apply Config Only (No Reinstall)
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleStartInstall}
+                disabled={errors.length > 0 || isRunning || starting !== null || !localNode.isRoot}
+                className="min-h-[42px] px-4 py-2 text-xs font-semibold rounded-md border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              >
+                {starting === 'install' || (isRunning && installJob.totalSteps === 6) ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                    Running Full Install...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4" aria-hidden="true" />
+                    Full Install (Packages + Config)
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Live Status & Progress Bar */}
@@ -316,7 +405,9 @@ export function DirectInstallPanel({
                     <>
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
                       <span className="text-emerald-700 dark:text-emerald-400">
-                        Installation Completed Successfully
+                        {installJob.totalSteps === 3
+                          ? 'Configuration Applied & Services Reloaded'
+                          : 'Installation Completed Successfully'}
                       </span>
                     </>
                   )}
@@ -324,7 +415,7 @@ export function DirectInstallPanel({
                     <>
                       <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" aria-hidden="true" />
                       <span className="text-red-700 dark:text-red-400">
-                        Installation Failed: {installJob.error || 'See log output below'}
+                        Operation Failed: {installJob.error || 'See log output below'}
                       </span>
                     </>
                   )}
@@ -346,7 +437,7 @@ export function DirectInstallPanel({
                     installJob.status === 'succeeded'
                       ? 'w-full'
                       : (['w-1/12', 'w-1/6', 'w-2/6', 'w-3/6', 'w-4/6', 'w-5/6', 'w-full'][
-                          Math.min(6, Math.max(0, installJob.stepIndex))
+                          pctSteps
                         ] ?? 'w-1/12')
                   }`}
                 />
