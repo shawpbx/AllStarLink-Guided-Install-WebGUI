@@ -641,7 +641,7 @@ Duplex=${mmdvmhost.duplex ? '1' : '0'}
 RFModeHang=10
 NetModeHang=3
 Display=${mmdvmhost.displayType}
-Daemon=1
+Daemon=0
 
 [Info]
 RXFrequency=${rxFreq}
@@ -1331,12 +1331,16 @@ else
   install -m 0755 /usr/local/src/MMDVMHost/MMDVMHost /usr/local/bin/MMDVMHost
 fi
 
+useradd --user-group -M --system mmdvm --shell /bin/false || true
+usermod -aG dialout mmdvm || true
 mkdir -p /etc/mmdvm /var/log/mmdvm
 curl -fsSL "https://radioid.net/static/user.csv" -o /etc/mmdvm/DMRIds.dat || true
 
 cat <<'EOF_MMDVM_INI' > /etc/mmdvm/MMDVM.ini
 ${mmdvmHostIni}
 EOF_MMDVM_INI
+
+chown -R mmdvm:mmdvm /etc/mmdvm /var/log/mmdvm || true
 
 cat <<'EOF_MMDVM_SVC' > /etc/systemd/system/mmdvmhost.service
 [Unit]
@@ -1346,6 +1350,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=mmdvm
+Group=mmdvm
+SupplementaryGroups=dialout
 ExecStart=/usr/local/bin/MMDVMHost /etc/mmdvm/MMDVM.ini
 Restart=on-failure
 RestartSec=5

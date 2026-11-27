@@ -1135,6 +1135,8 @@ def _write_mmdvmhost_config(cfg: dict) -> None:
 
     os.makedirs("/etc/mmdvm", exist_ok=True)
     os.makedirs("/var/log/mmdvm", exist_ok=True)
+    _run_cmd(["useradd", "--user-group", "-M", "--system", "mmdvm", "--shell", "/bin/false"], check=False)
+    _run_cmd(["usermod", "-aG", "dialout", "mmdvm"], check=False)
 
     ini = f"""; /etc/mmdvm/MMDVM.ini — AllStarLink Guided Install WebGUI
 [General]
@@ -1145,7 +1147,7 @@ Duplex={'1' if m['duplex'] else '0'}
 RFModeHang=10
 NetModeHang=3
 Display={m['displayType']}
-Daemon=1
+Daemon=0
 
 [Info]
 RXFrequency={m['rxFrequencyHz']}
@@ -1304,6 +1306,7 @@ LogoScreensaver=1
 """
     with open("/etc/mmdvm/MMDVM.ini", "w", encoding="utf-8") as fh:
         fh.write(ini)
+    _run_cmd(["chown", "-R", "mmdvm:mmdvm", "/etc/mmdvm", "/var/log/mmdvm"], check=False)
     _append_log("[INFO] Wrote /etc/mmdvm/MMDVM.ini")
 
     svc = """[Unit]
@@ -1313,6 +1316,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=mmdvm
+Group=mmdvm
+SupplementaryGroups=dialout
 ExecStart=/usr/local/bin/MMDVMHost /etc/mmdvm/MMDVM.ini
 Restart=on-failure
 RestartSec=5
