@@ -122,6 +122,7 @@ export interface DvSwitchConfig {
 
 export interface MmdvmHostConfig {
   enabled: boolean;
+  modemHardware: string;
   dmrId: string;
   repeaterSuffix: string;
   duplex: boolean;
@@ -132,6 +133,13 @@ export interface MmdvmHostConfig {
   modemBaud: 115200 | 230400 | 460800;
   rxOffset: number;
   txOffset: number;
+  rxInvert: boolean;
+  txInvert: boolean;
+  pttInvert: boolean;
+  txDelay: number;
+  dmrDelay: number;
+  rxLevel: number;
+  txLevel: number;
   configurePiUart: boolean;
   dmrEnable: boolean;
   dmrColorCode: number;

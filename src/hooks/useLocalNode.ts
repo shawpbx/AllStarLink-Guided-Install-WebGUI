@@ -53,6 +53,7 @@ export interface LiveTelemetry {
   hostname: string;
   uptimeSeconds: number | null;
   cpuTempC: number | null;
+  detectedSerialPorts?: string[];
   services: Record<string, string>;
   allstar: {
     active: boolean;
@@ -82,6 +83,7 @@ export interface LocalNodeController {
   authBusy: boolean;
   liveServices: Record<string, string> | null;
   detectedNodes: string[];
+  detectedSerialPorts: string[];
   hasSavedConfig: boolean;
   liveTelemetry: LiveTelemetry | null;
   liveLoading: boolean;
@@ -135,6 +137,7 @@ export function useLocalNode(): LocalNodeController {
   const [authBusy, setAuthBusy] = useState(false);
   const [liveServices, setLiveServices] = useState<Record<string, string> | null>(null);
   const [detectedNodes, setDetectedNodes] = useState<string[]>([]);
+  const [detectedSerialPorts, setDetectedSerialPorts] = useState<string[]>([]);
   const [hasSavedConfig, setHasSavedConfig] = useState(false);
   const [liveTelemetry, setLiveTelemetry] = useState<LiveTelemetry | null>(null);
   const [liveLoading, setLiveLoading] = useState(false);
@@ -168,6 +171,9 @@ export function useLocalNode(): LocalNodeController {
       setLiveTelemetry(data);
       if (data.services) {
         setLiveServices(data.services);
+      }
+      if (Array.isArray(data.detectedSerialPorts)) {
+        setDetectedSerialPorts(data.detectedSerialPorts);
       }
     } catch {
       // Ignore transient telemetry fetch errors
@@ -212,6 +218,7 @@ export function useLocalNode(): LocalNodeController {
         const svcData = (await svcRes.json()) as {
           services?: Record<string, string>;
           detectedNodes?: string[];
+          detectedSerialPorts?: string[];
           hasSavedConfig?: boolean;
         };
         if (svcData.services) {
@@ -219,6 +226,9 @@ export function useLocalNode(): LocalNodeController {
         }
         if (Array.isArray(svcData.detectedNodes)) {
           setDetectedNodes(svcData.detectedNodes);
+        }
+        if (Array.isArray(svcData.detectedSerialPorts)) {
+          setDetectedSerialPorts(svcData.detectedSerialPorts);
         }
         setHasSavedConfig(Boolean(svcData.hasSavedConfig));
       }
@@ -487,6 +497,7 @@ export function useLocalNode(): LocalNodeController {
     authBusy,
     liveServices,
     detectedNodes,
+    detectedSerialPorts,
     hasSavedConfig,
     liveTelemetry,
     liveLoading,

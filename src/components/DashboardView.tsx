@@ -1027,19 +1027,28 @@ export function DashboardView({
                   : 'Live RF and network digital voice users display automatically on your node.'}
               </p>
             </div>
-            <div className="relative">
-              <Search
-                className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2"
-                aria-hidden="true"
-              />
-              <input
-                type="text"
-                value={mmdvmSearch}
-                onChange={(e) => setMmdvmSearch(e.target.value)}
-                placeholder="Filter callsign or TG..."
-                aria-label="Filter MMDVM active and heard users"
-                className="min-h-[34px] w-44 pl-8 pr-2.5 py-1 text-xs rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
-              />
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search
+                  className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2"
+                  aria-hidden="true"
+                />
+                <input
+                  type="text"
+                  value={mmdvmSearch}
+                  onChange={(e) => setMmdvmSearch(e.target.value)}
+                  placeholder="Filter callsign or TG..."
+                  aria-label="Filter MMDVM active and heard users"
+                  className="min-h-[34px] w-44 pl-8 pr-2.5 py-1 text-xs rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => openStep(3)}
+                className="min-h-[34px] px-2.5 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap"
+              >
+                Configure Modem
+              </button>
             </div>
           </div>
 

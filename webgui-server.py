@@ -359,6 +359,7 @@ def validate_and_sanitize_config(raw: object) -> dict:
 
     # MMDVMHost validation
     mh_enabled = bool(m.get("enabled", False))
+    mh_hardware = str(m.get("modemHardware", "mmdvm_hs_hat_gpio")).strip() or "mmdvm_hs_hat_gpio"
     mh_dmr_id = str(m.get("dmrId", "")).strip()
     mh_suffix = str(m.get("repeaterSuffix", "")).strip()
     mh_rx = str(m.get("rxFrequencyHz", "")).strip()
@@ -368,6 +369,13 @@ def validate_and_sanitize_config(raw: object) -> dict:
     mh_power = _in_range_int(m.get("rfPower", 100), 1, 100)
     mh_rx_off = _in_range_int(m.get("rxOffset", 0), -10000, 10000)
     mh_tx_off = _in_range_int(m.get("txOffset", 0), -10000, 10000)
+    mh_rx_inv = bool(m.get("rxInvert", False))
+    mh_tx_inv = bool(m.get("txInvert", False))
+    mh_ptt_inv = bool(m.get("pttInvert", False))
+    mh_tx_delay = _in_range_int(m.get("txDelay", 100), 0, 500)
+    mh_dmr_delay = _in_range_int(m.get("dmrDelay", 0), 0, 500)
+    mh_rx_level = _in_range_int(m.get("rxLevel", 50), 0, 100)
+    mh_tx_level = _in_range_int(m.get("txLevel", 50), 0, 100)
     mh_cc = _in_range_int(m.get("dmrColorCode", 1), 0, 15)
     mh_host = str(m.get("dmrMasterHost", "")).strip()
     mh_mport = _in_range_int(m.get("dmrMasterPort", 62031), 1, 65535)
@@ -474,6 +482,7 @@ def validate_and_sanitize_config(raw: object) -> dict:
         },
         "mmdvmhost": {
             "enabled": mh_enabled,
+            "modemHardware": mh_hardware if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", mh_hardware) else "custom",
             "dmrId": mh_dmr_id,
             "repeaterSuffix": mh_suffix,
             "duplex": bool(m.get("duplex", False)),
@@ -484,6 +493,13 @@ def validate_and_sanitize_config(raw: object) -> dict:
             "modemBaud": mh_baud,
             "rxOffset": mh_rx_off,
             "txOffset": mh_tx_off,
+            "rxInvert": mh_rx_inv,
+            "txInvert": mh_tx_inv,
+            "pttInvert": mh_ptt_inv,
+            "txDelay": mh_tx_delay,
+            "dmrDelay": mh_dmr_delay,
+            "rxLevel": mh_rx_level,
+            "txLevel": mh_tx_level,
             "configurePiUart": bool(m.get("configurePiUart", True)),
             "dmrEnable": bool(m.get("dmrEnable", True)),
             "dmrColorCode": mh_cc,
@@ -1182,15 +1198,15 @@ UARTPort={m['modemPort']}
 UARTSpeed={m['modemBaud']}
 RXFrequency={m['rxFrequencyHz']}
 TXFrequency={m['txFrequencyHz']}
-RXInvert=0
-TXInvert=0
-PTTInvert=0
-TXDelay=100
+RXInvert={'1' if m.get('rxInvert', False) else '0'}
+TXInvert={'1' if m.get('txInvert', False) else '0'}
+PTTInvert={'1' if m.get('pttInvert', False) else '0'}
+TXDelay={m.get('txDelay', 100)}
 RXOffset={m['rxOffset']}
 TXOffset={m['txOffset']}
-DMRDelay=0
-RXLevel=50
-TXLevel=50
+DMRDelay={m.get('dmrDelay', 0)}
+RXLevel={m.get('rxLevel', 50)}
+TXLevel={m.get('txLevel', 50)}
 RXDCOffset=0
 TXDCOffset=0
 RFLevel={m['rfPower']}
@@ -1600,6 +1616,17 @@ def _detect_rpt_nodes() -> list[str]:
     except OSError:
         pass
     return found
+
+
+def _detect_serial_ports() -> list[str]:
+    ports: list[str] = []
+    dev_dir = Path("/dev")
+    for pattern in ("ttyAMA*", "serial0", "ttyACM*", "ttyUSB*"):
+        for candidate in sorted(dev_dir.glob(pattern)):
+            p_str = str(candidate)
+            if p_str not in ports:
+                ports.append(p_str)
+    return ports
 
 
 _dmr_id_cache: dict[str, str] = {}
@@ -2357,6 +2384,7 @@ class WebGuiHandler(http.server.SimpleHTTPRequestHandler):
                 "hostname": socket.gethostname(),
                 "services": services,
                 "detectedNodes": _detect_rpt_nodes(),
+                "detectedSerialPorts": _detect_serial_ports(),
                 "hasSavedConfig": os.path.isfile(SAVED_CONFIG_FILE),
             })
             return
@@ -2380,6 +2408,7 @@ class WebGuiHandler(http.server.SimpleHTTPRequestHandler):
                 "hostname": socket.gethostname(),
                 "uptimeSeconds": uptime_s,
                 "cpuTempC": cpu_temp_c,
+                "detectedSerialPorts": _detect_serial_ports(),
                 "services": services,
                 "allstar": _collect_allstar_live(services.get("asterisk") == "active"),
                 "mmdvm": _collect_mmdvm_live(services),

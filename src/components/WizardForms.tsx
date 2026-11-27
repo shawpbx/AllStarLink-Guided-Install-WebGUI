@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import {
   DMR_MASTER_PRESETS,
+  MMDVM_MODEM_OPTIONS,
   PLATFORM_OPTIONS,
   TIMEZONES,
 } from '../data/presets';
@@ -1366,6 +1367,148 @@ export function WizardForms({
                 </div>
               ) : (
                 <div className="space-y-5">
+                  {/* MMDVM Modem Hardware Dropdown */}
+                  <div className="p-4 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 space-y-3">
+                    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_240px] gap-4 items-start">
+                      <div>
+                        <label htmlFor="mmdvmModemHardware" className={labelCls}>
+                          MMDVM Modem Hardware
+                        </label>
+                        <select
+                          id="mmdvmModemHardware"
+                          value={config.mmdvmhost.modemHardware || 'mmdvm_hs_hat_gpio'}
+                          onChange={(e) => {
+                            const selectedId = e.target.value;
+                            const preset = MMDVM_MODEM_OPTIONS.find((m) => m.id === selectedId);
+                            if (!preset || selectedId === 'custom') {
+                              updateMmdvmHost({ modemHardware: 'custom' });
+                              return;
+                            }
+                            updateMmdvmHost({
+                              modemHardware: preset.id,
+                              modemPort: preset.modemPort,
+                              modemBaud: preset.modemBaud,
+                              duplex: preset.duplex,
+                              configurePiUart: preset.configurePiUart,
+                              rxInvert: preset.rxInvert,
+                              txInvert: preset.txInvert,
+                              pttInvert: preset.pttInvert,
+                              txDelay: preset.txDelay,
+                              dmrDelay: preset.dmrDelay,
+                              rxLevel: preset.rxLevel,
+                              txLevel: preset.txLevel,
+                              rfPower: preset.rfPower,
+                            });
+                          }}
+                          className={inputCls}
+                        >
+                          {(
+                            [
+                              'Hotspots (GPIO)',
+                              'Hotspots (USB)',
+                              'Repeater Boards',
+                              'Software / Custom',
+                            ] as const
+                          ).map((groupName) => (
+                            <optgroup key={groupName} label={groupName}>
+                              {MMDVM_MODEM_OPTIONS.filter((m) => m.group === groupName).map(
+                                (modem) => (
+                                  <option key={modem.id} value={modem.id}>
+                                    {modem.label}
+                                  </option>
+                                )
+                              )}
+                            </optgroup>
+                          ))}
+                        </select>
+                        <p className={helpCls}>
+                          {MMDVM_MODEM_OPTIONS.find(
+                            (m) => m.id === (config.mmdvmhost.modemHardware || 'mmdvm_hs_hat_gpio')
+                          )?.summary ||
+                            'Select your MMDVM hat, USB hotspot, or repeater board to auto-fill port, baud rate, duplex, and invert settings.'}
+                        </p>
+                      </div>
+
+                      <div>
+                        <label htmlFor="mmdvmPortSelect" className={labelCls}>
+                          Serial / UART Device
+                        </label>
+                        {(() => {
+                          const standardPorts = [
+                            '/dev/ttyAMA0',
+                            '/dev/serial0',
+                            '/dev/ttyACM0',
+                            '/dev/ttyUSB0',
+                            'null',
+                          ];
+                          const detectedSet = new Set(localNode.detectedSerialPorts || []);
+                          const portOptions = Array.from(
+                            new Set([...(localNode.detectedSerialPorts || []), ...standardPorts])
+                          );
+                          const isKnown = portOptions.includes(config.mmdvmhost.modemPort);
+                          return (
+                            <div className="space-y-2">
+                              <select
+                                id="mmdvmPortSelect"
+                                value={isKnown ? config.mmdvmhost.modemPort : '__custom__'}
+                                onChange={(e) => {
+                                  if (e.target.value === '__custom__') {
+                                    updateMmdvmHost({
+                                      modemHardware: 'custom',
+                                      modemPort: '/dev/ttyUSB1',
+                                    });
+                                  } else {
+                                    updateMmdvmHost({
+                                      modemPort: e.target.value,
+                                      ...(e.target.value === 'null'
+                                        ? { modemHardware: 'null_modem', configurePiUart: false }
+                                        : {}),
+                                    });
+                                  }
+                                }}
+                                className={`${inputCls} font-mono`}
+                              >
+                                {portOptions.map((p) => (
+                                  <option key={p} value={p}>
+                                    {p === 'null'
+                                      ? 'null (No RF Modem)'
+                                      : detectedSet.has(p)
+                                        ? `${p} (detected)`
+                                        : p}
+                                  </option>
+                                ))}
+                                <option value="__custom__">Custom device path...</option>
+                              </select>
+                              {!isKnown && (
+                                <input
+                                  type="text"
+                                  value={config.mmdvmhost.modemPort}
+                                  onChange={(e) =>
+                                    updateMmdvmHost({
+                                      modemHardware: 'custom',
+                                      modemPort: e.target.value,
+                                    })
+                                  }
+                                  placeholder="/dev/ttyUSB1"
+                                  aria-label="Custom modem serial device path"
+                                  className={`${inputCls} font-mono`}
+                                />
+                              )}
+                            </div>
+                          );
+                        })()}
+                        {localNode.detectedSerialPorts.length > 0 && (
+                          <p className={helpCls}>
+                            Detected on host:{' '}
+                            <span className="font-mono">
+                              {localNode.detectedSerialPorts.join(', ')}
+                            </span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                     <div>
                       <label htmlFor="mmdvmDmrId" className={labelCls}>
@@ -1465,28 +1608,6 @@ export function WizardForms({
 
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                     <div>
-                      <label htmlFor="mmdvmPort" className={labelCls}>
-                        Modem Serial / UART Port
-                      </label>
-                      <input
-                        id="mmdvmPort"
-                        list="mmdvmPortOptions"
-                        type="text"
-                        value={config.mmdvmhost.modemPort}
-                        onChange={(e) => updateMmdvmHost({ modemPort: e.target.value })}
-                        className={`${inputCls} font-mono`}
-                        placeholder="/dev/ttyAMA0"
-                      />
-                      <datalist id="mmdvmPortOptions">
-                        <option value="/dev/ttyAMA0" />
-                        <option value="/dev/serial0" />
-                        <option value="/dev/ttyUSB0" />
-                        <option value="/dev/ttyACM0" />
-                        <option value="null" />
-                      </datalist>
-                    </div>
-
-                    <div>
                       <label htmlFor="mmdvmBaud" className={labelCls}>
                         UART Baud Rate
                       </label>
@@ -1537,6 +1658,44 @@ export function WizardForms({
                     </div>
 
                     <div>
+                      <label htmlFor="mmdvmTxDelay" className={labelCls}>
+                        TX / DMR Delay (ms)
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          id="mmdvmTxDelay"
+                          type="number"
+                          min={0}
+                          max={500}
+                          aria-label="MMDVM TX Delay ms"
+                          value={config.mmdvmhost.txDelay ?? 100}
+                          onChange={(e) =>
+                            updateMmdvmHost({
+                              txDelay: Math.min(500, Math.max(0, Number(e.target.value) || 0)),
+                            })
+                          }
+                          className={`${inputCls} font-mono tabular-nums`}
+                          placeholder="100"
+                        />
+                        <input
+                          id="mmdvmDmrDelay"
+                          type="number"
+                          min={0}
+                          max={500}
+                          aria-label="MMDVM DMR Delay"
+                          value={config.mmdvmhost.dmrDelay ?? 0}
+                          onChange={(e) =>
+                            updateMmdvmHost({
+                              dmrDelay: Math.min(500, Math.max(0, Number(e.target.value) || 0)),
+                            })
+                          }
+                          className={`${inputCls} font-mono tabular-nums`}
+                          placeholder="0"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
                       <label htmlFor="mmdvmRfPower" className={labelCls}>
                         RF Level (%) &amp; Duplex
                       </label>
@@ -1563,6 +1722,86 @@ export function WizardForms({
                           />
                           Duplex
                         </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Modem Audio Levels & Signal Inversion */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center p-3 rounded-md border border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                        Signal Invert:
+                      </span>
+                      <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(config.mmdvmhost.rxInvert)}
+                          onChange={(e) => updateMmdvmHost({ rxInvert: e.target.checked })}
+                          className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                        />
+                        RXInvert
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(config.mmdvmhost.txInvert)}
+                          onChange={(e) => updateMmdvmHost({ txInvert: e.target.checked })}
+                          className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                        />
+                        TXInvert
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(config.mmdvmhost.pttInvert)}
+                          onChange={(e) => updateMmdvmHost({ pttInvert: e.target.checked })}
+                          className="h-4 w-4 rounded border-slate-300 text-sky-700 focus:ring-sky-600"
+                        />
+                        PTTInvert
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex items-center gap-2">
+                        <label
+                          htmlFor="mmdvmRxLevel"
+                          className="text-xs font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap"
+                        >
+                          RX Level
+                        </label>
+                        <input
+                          id="mmdvmRxLevel"
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={config.mmdvmhost.rxLevel ?? 50}
+                          onChange={(e) =>
+                            updateMmdvmHost({
+                              rxLevel: Math.min(100, Math.max(0, Number(e.target.value) || 0)),
+                            })
+                          }
+                          className={`${inputCls} min-h-[34px] py-1 font-mono tabular-nums`}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label
+                          htmlFor="mmdvmTxLevel"
+                          className="text-xs font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap"
+                        >
+                          TX Level
+                        </label>
+                        <input
+                          id="mmdvmTxLevel"
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={config.mmdvmhost.txLevel ?? 50}
+                          onChange={(e) =>
+                            updateMmdvmHost({
+                              txLevel: Math.min(100, Math.max(0, Number(e.target.value) || 0)),
+                            })
+                          }
+                          className={`${inputCls} min-h-[34px] py-1 font-mono tabular-nums`}
+                        />
                       </div>
                     </div>
                   </div>
