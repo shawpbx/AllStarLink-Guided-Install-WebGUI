@@ -60,6 +60,7 @@ const SERVICE_UNITS = new Set([
   'mmdvm_bridge',
   'analog_bridge',
   'md380-emu',
+  'dmrgateway',
   'mmdvmhost',
 ]);
 
@@ -148,6 +149,8 @@ export function DashboardView({
   const liveServices = live?.services || localNode.liveServices;
   const asteriskState = liveServices?.asterisk;
   const mmdvmhostState = live?.mmdvm.mmdvmhostState || liveServices?.mmdvmhost;
+  const dmrGatewayState =
+    live?.mmdvm.dmrGatewayState || liveServices?.dmrgateway;
   const mmdvmBridgeState =
     live?.mmdvm.mmdvmBridgeState || liveServices?.mmdvm_bridge;
   const anyMmdvmActive =
@@ -444,6 +447,13 @@ export function DashboardView({
       role: 'MMDVMHost RF Modem',
       enabled: mmdvmhost.enabled,
       port: mmdvmhost.modemPort,
+      step: 3,
+    },
+    {
+      unit: 'dmrgateway',
+      role: 'DMRGateway (MMDVM DMR Bridge)',
+      enabled: mmdvmhost.enabled && mmdvmhost.dmrEnable,
+      port: `${mmdvmhost.dmrMasterPort}/udp`,
       step: 3,
     },
     {
@@ -1023,7 +1033,7 @@ export function DashboardView({
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 {localNode.localNodeAvailable
-                  ? `MMDVMHost: ${mmdvmhostState || 'inactive'} · MMDVM_Bridge: ${mmdvmBridgeState || 'inactive'}`
+                  ? `MMDVMHost: ${mmdvmhostState || 'inactive'} · DMRGateway: ${dmrGatewayState || 'inactive'} · MMDVM_Bridge: ${mmdvmBridgeState || 'inactive'}`
                   : 'Live RF and network digital voice users display automatically on your node.'}
               </p>
             </div>

@@ -62,6 +62,7 @@ export interface LiveTelemetry {
   };
   mmdvm: {
     mmdvmhostState: string;
+    dmrGatewayState?: string;
     mmdvmBridgeState: string;
     activeTransmissions: MmdvmUserActivity[];
     recentUsers: MmdvmUserActivity[];

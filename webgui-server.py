@@ -36,6 +36,7 @@ SERVICES = [
     "md380-emu",
     "analog_bridge",
     "mmdvm_bridge",
+    "dmrgateway",
     "mmdvmhost",
 ]
 
@@ -1280,8 +1281,8 @@ Debug=0
 Enable={'1' if m['dmrEnable'] else '0'}
 LocalAddress=127.0.0.1
 LocalPort=62033
-GatewayAddress={m['dmrMasterHost']}
-GatewayPort={m['dmrMasterPort']}
+GatewayAddress=127.0.0.1
+GatewayPort=62031
 Jitter=360
 Slot1={'1' if m['duplex'] else '0'}
 Slot2=1
@@ -1325,6 +1326,100 @@ Enable=0
 """
     with open("/etc/mmdvm/MMDVM.ini", "w", encoding="utf-8") as fh:
         fh.write(ini)
+
+    dmr_host = str(m.get("dmrMasterHost", "")).strip()
+    dmr_net_enabled = "1" if (m["dmrEnable"] and dmr_host) else "0"
+    dmrgw_ini = f"""; /etc/mmdvm/DMRGateway.ini — AllStarLink Guided Install WebGUI
+[General]
+Id={full_id}
+Timeout=10
+RptAddress=127.0.0.1
+RptPort=62033
+LocalAddress=127.0.0.1
+LocalPort=62031
+RuleTrace=0
+Daemon=0
+TrunkingEnabled=0
+Debug=0
+
+[Log]
+DisplayLevel=1
+MQTTLevel=0
+
+[Voice]
+Enabled=0
+Language=en_GB
+Directory=/etc/mmdvm/Audio
+
+[Info]
+Callsign={callsign}
+TXFrequency={m['txFrequencyHz']}
+RXFrequency={m['rxFrequencyHz']}
+Power=1
+ColorCode={m['dmrColorCode']}
+Duplex={'1' if m['duplex'] else '0'}
+Slot1={'1' if m['duplex'] else '0'}
+Slot2=1
+Latitude=0.0
+Longitude=0.0
+Height=0
+Location=AllStarLink Node {a['nodeNumber']}
+Description={callsign} MMDVM Hotspot
+URL=https://www.allstarlink.org
+
+[XLX Network]
+Enabled=0
+File=/etc/mmdvm/XLXHosts.txt
+Port=62030
+Password=passw0rd
+ReloadTime=60
+Slot=1
+TG=6
+Base=64000
+Startup=950
+Relink=10
+Debug=0
+UserControl=1
+
+[DMR Network 1]
+Enabled={dmr_net_enabled}
+Name=DMR_Master
+Address={dmr_host}
+Port={m['dmrMasterPort']}
+Password={m['dmrMasterPassword']}
+PassAllTG=1
+PassAllTG=2
+PassAllPC=1
+PassAllPC=2
+Location=0
+Debug=0
+
+[GPSD]
+Enable=0
+Address=127.0.0.1
+Port=2947
+
+[APRS]
+Enable=0
+
+[MQTT]
+Address=127.0.0.1
+Port=1883
+Keepalive=60
+Auth=0
+Username=mmdvm
+Password=mmdvm
+Name=dmr-gateway
+
+[Dynamic TG Control]
+Enable=0
+
+[Remote Commands]
+Enable=0
+"""
+    with open("/etc/mmdvm/DMRGateway.ini", "w", encoding="utf-8") as fh:
+        fh.write(dmrgw_ini)
+
     for data_file in ("DMRIds.dat", "NXDN.csv", "RSSI.dat"):
         dst = os.path.join("/etc/mmdvm", data_file)
         src = os.path.join("/usr/local/src/MMDVMHost", data_file)
@@ -1334,12 +1429,36 @@ Enable=0
             else:
                 Path(dst).touch()
     _run_cmd(["chown", "-R", "mmdvm:mmdvm", "/etc/mmdvm", "/var/log/mmdvm"], check=False)
-    _append_log("[INFO] Wrote /etc/mmdvm/MMDVM.ini")
+    try:
+        os.chmod("/etc/mmdvm/DMRGateway.ini", 0o640)
+    except OSError:
+        pass
+    _append_log("[INFO] Wrote /etc/mmdvm/MMDVM.ini and /etc/mmdvm/DMRGateway.ini")
+
+    dmrgw_svc = """[Unit]
+Description=DMRGateway Digital Voice Network Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mmdvm
+Group=mmdvm
+ExecStart=/usr/local/bin/DMRGateway /etc/mmdvm/DMRGateway.ini
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"""
+    with open("/etc/systemd/system/dmrgateway.service", "w", encoding="utf-8") as fh:
+        fh.write(dmrgw_svc)
+    _append_log("[INFO] Wrote /etc/systemd/system/dmrgateway.service")
 
     svc = """[Unit]
 Description=MMDVMHost Digital Voice RF Modem Service
-After=network-online.target
-Wants=network-online.target
+After=network-online.target dmrgateway.service
+Wants=network-online.target dmrgateway.service
 
 [Service]
 Type=simple
@@ -1356,6 +1475,29 @@ WantedBy=multi-user.target
     with open("/etc/systemd/system/mmdvmhost.service", "w", encoding="utf-8") as fh:
         fh.write(svc)
     _append_log("[INFO] Wrote /etc/systemd/system/mmdvmhost.service")
+
+
+def _ensure_dmrgateway_binary(force_rebuild: bool = False) -> bool:
+    if not force_rebuild and os.path.isfile("/usr/local/bin/DMRGateway"):
+        return True
+    _append_log("[INFO] Building g4klx/DMRGateway for MMDVMHost DMR master authentication...")
+    gw_src = "/usr/local/src/DMRGateway"
+    if os.path.isdir(gw_src):
+        shutil.rmtree(gw_src)
+    if _run_cmd(["git", "clone", "--depth", "1", "https://github.com/g4klx/DMRGateway.git", gw_src], check=False) != 0:
+        _append_log("[WARN] Failed to clone g4klx/DMRGateway.")
+        return False
+    nproc = str(os.cpu_count() or 2)
+    if _run_cmd(["make", "-C", gw_src, f"-j{nproc}"], check=False) != 0:
+        _append_log("[WARN] DMRGateway build failed — ensuring libmosquitto-dev is installed and retrying...")
+        _run_cmd(["apt-get", "install", "-y", "--no-install-recommends", "libmosquitto-dev", "g++", "make"], check=False)
+        if _run_cmd(["make", "-C", gw_src, f"-j{nproc}"], check=False) != 0:
+            _append_log("[WARN] Could not compile DMRGateway.")
+            return False
+    if os.path.isfile(f"{gw_src}/DMRGateway"):
+        _run_cmd(["install", "-m", "0755", f"{gw_src}/DMRGateway", "/usr/local/bin/DMRGateway"], check=False)
+        return os.path.isfile("/usr/local/bin/DMRGateway")
+    return False
 
 
 def _detect_codename() -> str:
@@ -1517,8 +1659,13 @@ def _run_install_worker(cfg: dict) -> None:
             os.makedirs("/etc/mmdvm", exist_ok=True)
             os.makedirs("/var/log/mmdvm", exist_ok=True)
             _run_cmd(["curl", "-fsSL", "https://radioid.net/static/user.csv", "-o", "/etc/mmdvm/DMRIds.dat"], check=False)
+            if m["dmrEnable"]:
+                _ensure_dmrgateway_binary(force_rebuild=True)
             _write_mmdvmhost_config(cfg)
             _run_cmd(["systemctl", "daemon-reload"])
+            if m["dmrEnable"] and os.path.isfile("/usr/local/bin/DMRGateway"):
+                _run_cmd(["systemctl", "enable", "--now", "dmrgateway.service"], check=False)
+                _run_cmd(["systemctl", "restart", "dmrgateway.service"], check=False)
             _run_cmd(["systemctl", "enable", "--now", "mmdvmhost.service"], check=False)
             _run_cmd(["systemctl", "restart", "mmdvmhost.service"], check=False)
         else:
@@ -2249,6 +2396,7 @@ def _collect_mmdvm_live(services: dict[str, str]) -> dict:
 
     return {
         "mmdvmhostState": services.get("mmdvmhost", "inactive"),
+        "dmrGatewayState": services.get("dmrgateway", "inactive"),
         "mmdvmBridgeState": services.get("mmdvm_bridge", "inactive"),
         "activeTransmissions": [_strip_internal(x) for x in all_active],
         "recentUsers": dedup_recent,
@@ -2309,6 +2457,12 @@ def _run_apply_config_worker(cfg: dict) -> None:
                 _append_log("[WARN] DVSwitch Server packages are not installed on this host yet. Run the Full Installer once to install dvswitch-server, or disable DVSwitch in Step 3 if you only need AllStarLink + MMDVMHost.")
         if m["enabled"]:
             _run_cmd(["systemctl", "daemon-reload"], check=False)
+            if m["dmrEnable"]:
+                if _ensure_dmrgateway_binary(force_rebuild=False):
+                    _run_cmd(["systemctl", "enable", "--now", "dmrgateway.service"], check=False)
+                    _run_cmd(["systemctl", "restart", "dmrgateway.service"], check=False)
+            else:
+                _run_cmd(["systemctl", "stop", "dmrgateway.service"], check=False)
             _run_cmd(["systemctl", "restart", "mmdvmhost.service"], check=False)
 
         time.sleep(2)
