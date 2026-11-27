@@ -386,8 +386,8 @@ def validate_and_sanitize_config(raw: object) -> dict:
             raise ValueError("MMDVMHost ESSID suffix must be 2 digits.")
         if not re.fullmatch(r"\d{8,9}", mh_rx) or not re.fullmatch(r"\d{8,9}", mh_tx):
             raise ValueError("MMDVMHost RX/TX frequencies must be 8-9 digit values in Hz.")
-        if not re.fullmatch(r"/dev/tty[A-Za-z0-9_-]+", mh_port):
-            raise ValueError("Invalid MMDVMHost serial/UART device path.")
+        if mh_port != "null" and not re.fullmatch(r"/dev/(tty|serial)[A-Za-z0-9_-]+", mh_port):
+            raise ValueError("Invalid MMDVMHost serial/UART device path (use /dev/ttyAMA0, /dev/ttyUSB0, /dev/serial0, or null).")
         if mh_baud not in {115200, 230400, 460800}:
             raise ValueError("Invalid MMDVMHost baud rate.")
         if bool(m.get("dmrEnable", True)):
@@ -1138,7 +1138,8 @@ def _write_mmdvmhost_config(cfg: dict) -> None:
     _run_cmd(["useradd", "--user-group", "-M", "--system", "mmdvm", "--shell", "/bin/false"], check=False)
     _run_cmd(["usermod", "-aG", "dialout", "mmdvm"], check=False)
 
-    ini = f"""; /etc/mmdvm/MMDVM.ini — AllStarLink Guided Install WebGUI
+    protocol = "null" if m["modemPort"] == "null" else "uart"
+    ini = f"""; /etc/mmdvm/MMDVM.ini — AllStarLink Guided Install WebGUI (MMDVM-Host schema)
 [General]
 Callsign={callsign}
 Id={full_id}
@@ -1146,26 +1147,21 @@ Timeout=180
 Duplex={'1' if m['duplex'] else '0'}
 RFModeHang=10
 NetModeHang=3
-Display={m['displayType']}
 Daemon=0
 
-[Info]
-RXFrequency={m['rxFrequencyHz']}
-TXFrequency={m['txFrequencyHz']}
-Power={m['rfPower']}
-Latitude={m['latitude']}
-Longitude={m['longitude']}
-Height=0
-Location={m['location'] or f"Node {a['nodeNumber']}"}
-Description={callsign} MMDVMHost
-URL=https://github.com/g4klx/MMDVMHost
-
 [Log]
-DisplayLevel=0
-FileLevel=1
-FilePath=/var/log/mmdvm
-FileRoot=MMDVM
-FileRotate=1
+; 0=No logging, 1=Debug, 2=Message, 3=Info, 4=Warning, 5=Error, 6=Fatal
+MQTTLevel=0
+DisplayLevel=1
+
+[MQTT]
+Host=127.0.0.1
+Port=1883
+Auth=0
+Username=mmdvm
+Password=mmdvm
+Keepalive=60
+Name=host
 
 [CW Id]
 Enable=0
@@ -1176,10 +1172,16 @@ Callsign={callsign}
 File=/etc/mmdvm/DMRIds.dat
 Time=24
 
+[NXDN Id Lookup]
+File=/etc/mmdvm/NXDN.csv
+Time=24
+
 [Modem]
-Protocol=uart
+Protocol={protocol}
 UARTPort={m['modemPort']}
 UARTSpeed={m['modemBaud']}
+RXFrequency={m['rxFrequencyHz']}
+TXFrequency={m['txFrequencyHz']}
 RXInvert=0
 TXInvert=0
 PTTInvert=0
@@ -1198,7 +1200,7 @@ DMRTXLevel=50
 YSFTXLevel=50
 P25TXLevel=50
 NXDNTXLevel=50
-RSSIMappingFile=RSSI.dat
+RSSIMappingFile=/etc/mmdvm/RSSI.dat
 UseCOSAsLockout=0
 Trace=0
 Debug=0
@@ -1235,7 +1237,6 @@ ModeHang=10
 
 [P25]
 Enable={'1' if m['p25Enable'] else '0'}
-Id={m['dmrId']}
 NAC=293
 OverrideUIDCheck=0
 SelfOnly=0
@@ -1244,7 +1245,6 @@ ModeHang=10
 
 [NXDN]
 Enable={'1' if m['nxdnEnable'] else '0'}
-Id={m['dmrId']}
 RAN=1
 SelfOnly=0
 RemoteGateway=0
@@ -1252,19 +1252,20 @@ ModeHang=10
 
 [D-Star Network]
 Enable={'1' if m['dstarEnable'] else '0'}
+LocalAddress=127.0.0.1
+LocalPort=20011
 GatewayAddress=127.0.0.1
 GatewayPort=20010
-LocalPort=20011
 ModeHang=3
 Debug=0
 
 [DMR Network]
 Enable={'1' if m['dmrEnable'] else '0'}
-Type=Direct
-Address={m['dmrMasterHost']}
-Port={m['dmrMasterPort']}
-Local=62033
-Password={m['dmrMasterPassword']}
+LocalAddress=127.0.0.1
+LocalPort=62033
+GatewayAddress={m['dmrMasterHost']}
+GatewayPort={m['dmrMasterPort']}
+Jitter=360
 Slot1={'1' if m['duplex'] else '0'}
 Slot2=1
 ModeHang=3
@@ -1281,14 +1282,16 @@ Debug=0
 
 [P25 Network]
 Enable={'1' if m['p25Enable'] else '0'}
+LocalAddress=127.0.0.1
+LocalPort=32010
 GatewayAddress=127.0.0.1
 GatewayPort=42020
-LocalPort=32010
 ModeHang=3
 Debug=0
 
 [NXDN Network]
 Enable={'1' if m['nxdnEnable'] else '0'}
+Protocol=Icom
 LocalAddress=127.0.0.1
 LocalPort=14021
 GatewayAddress=127.0.0.1
@@ -1296,16 +1299,23 @@ GatewayPort=14020
 ModeHang=3
 Debug=0
 
-[OLED]
-Type={m['oledType']}
-Brightness=0
-Invert=0
-Scroll=1
-Rotate=0
-LogoScreensaver=1
+[Lock File]
+Enable=0
+File=/tmp/MMDVM_Active.lck
+
+[Remote Control]
+Enable=0
 """
     with open("/etc/mmdvm/MMDVM.ini", "w", encoding="utf-8") as fh:
         fh.write(ini)
+    for data_file in ("DMRIds.dat", "NXDN.csv", "RSSI.dat"):
+        dst = os.path.join("/etc/mmdvm", data_file)
+        src = os.path.join("/usr/local/src/MMDVMHost", data_file)
+        if not os.path.exists(dst):
+            if os.path.isfile(src):
+                shutil.copy2(src, dst)
+            else:
+                Path(dst).touch()
     _run_cmd(["chown", "-R", "mmdvm:mmdvm", "/etc/mmdvm", "/var/log/mmdvm"], check=False)
     _append_log("[INFO] Wrote /etc/mmdvm/MMDVM.ini")
 

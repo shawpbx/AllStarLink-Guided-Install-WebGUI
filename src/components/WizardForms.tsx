@@ -1479,8 +1479,10 @@ export function WizardForms({
                       />
                       <datalist id="mmdvmPortOptions">
                         <option value="/dev/ttyAMA0" />
+                        <option value="/dev/serial0" />
                         <option value="/dev/ttyUSB0" />
                         <option value="/dev/ttyACM0" />
+                        <option value="null" />
                       </datalist>
                     </div>
 

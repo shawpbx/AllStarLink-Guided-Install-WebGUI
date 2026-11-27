@@ -130,6 +130,7 @@ fi
 if [[ -n "${REPO_URL}" ]]; then
   if [[ -d "${INSTALL_DIR}/.git" ]]; then
     echo "[INFO] Updating existing checkout in ${INSTALL_DIR} (${BRANCH})..."
+    git -C "${INSTALL_DIR}" config core.fileMode false
     git -C "${INSTALL_DIR}" fetch origin "${BRANCH}"
     git -C "${INSTALL_DIR}" checkout "${BRANCH}"
     git -C "${INSTALL_DIR}" pull --ff-only origin "${BRANCH}"
@@ -137,6 +138,7 @@ if [[ -n "${REPO_URL}" ]]; then
     echo "[INFO] Cloning ${REPO_URL} (${BRANCH}) into ${INSTALL_DIR}..."
     rm -rf "${INSTALL_DIR}"
     git clone --branch "${BRANCH}" --depth 1 "${REPO_URL}" "${INSTALL_DIR}"
+    git -C "${INSTALL_DIR}" config core.fileMode false
   fi
 elif [[ "${LOCAL_SOURCE}" -eq 1 ]]; then
   echo "[INFO] Installing from local repository checkout ${SCRIPT_DIR}..."
@@ -163,7 +165,6 @@ if [[ ! -f "${INSTALL_DIR}/webgui-server.py" ]]; then
   echo "[ERROR] Missing ${INSTALL_DIR}/webgui-server.py in repository."
   exit 1
 fi
-chmod 0755 "${INSTALL_DIR}/webgui-server.py"
 
 cat <<EOF_SVC > /etc/systemd/system/asl-webgui.service
 [Unit]
