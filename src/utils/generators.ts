@@ -1270,17 +1270,16 @@ if [[ "\${ARCH}" == "arm64" ]] && ! dpkg --print-foreign-architectures | grep -q
   dpkg --add-architecture armhf || true
 fi
 
-wget -q http://dvswitch.org/buster -O /tmp/dvswitch-repo || wget -q http://dvswitch.org/bullseye -O /tmp/dvswitch-repo
+DVS_SCRIPT="bookworm"
+if [[ "\${OS_CODENAME:-}" == "trixie" ]]; then
+  DVS_SCRIPT="trixie"
+fi
+curl -fsSL "http://dvswitch.org/\${DVS_SCRIPT}" -o /tmp/dvswitch-repo || curl -fsSL http://dvswitch.org/bookworm -o /tmp/dvswitch-repo
 chmod +x /tmp/dvswitch-repo
 /tmp/dvswitch-repo || true
 rm -f /tmp/dvswitch-repo
 
-# Ensure DVSwitch repo uses stable Debian suite on Debian 13 (Trixie)
-if [[ -f /etc/apt/sources.list.d/dvswitch.list ]]; then
-  sed -i 's/trixie/bookworm/g' /etc/apt/sources.list.d/dvswitch.list || true
-fi
-
-apt-get update -y
+apt-get update -y --allow-releaseinfo-change || apt-get update -y
 apt-get install -y dvswitch-server || {
   echo "[WARN] dvswitch-server metapackage fallback; installing individual bridge components..."
   apt-get install -y mmdvm-bridge analog-bridge md380-emu dvswitch-base || true

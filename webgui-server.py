@@ -1151,7 +1151,8 @@ def _write_mmdvmhost_config(cfg: dict) -> None:
 
     os.makedirs("/etc/mmdvm", exist_ok=True)
     os.makedirs("/var/log/mmdvm", exist_ok=True)
-    _run_cmd(["useradd", "--user-group", "-M", "--system", "mmdvm", "--shell", "/bin/false"], check=False)
+    if subprocess.run(["id", "-u", "mmdvm"], capture_output=True).returncode != 0:
+        _run_cmd(["useradd", "--user-group", "-M", "--system", "mmdvm", "--shell", "/bin/false"], check=False)
     _run_cmd(["usermod", "-aG", "dialout", "mmdvm"], check=False)
 
     protocol = "null" if m["modemPort"] == "null" else "uart"
@@ -1468,8 +1469,11 @@ def _run_install_worker(cfg: dict) -> None:
             elif arch == "arm64" and "armhf" not in foreign:
                 _run_cmd(["dpkg", "--add-architecture", "armhf"], check=False)
 
-            if _run_cmd(["wget", "-q", "http://dvswitch.org/buster", "-O", "/tmp/dvswitch-repo"], check=False) != 0:
-                _run_cmd(["wget", "-q", "http://dvswitch.org/bullseye", "-O", "/tmp/dvswitch-repo"], check=False)
+            dvs_script = "trixie" if codename == "trixie" else "bookworm"
+            dvs_url = f"http://dvswitch.org/{dvs_script}"
+            _append_log(f"[INFO] Downloading official DVSwitch repository setup ({dvs_url})...")
+            if _run_cmd(["curl", "-fsSL", dvs_url, "-o", "/tmp/dvswitch-repo"], check=False) != 0:
+                _run_cmd(["curl", "-fsSL", "http://dvswitch.org/bookworm", "-o", "/tmp/dvswitch-repo"], check=False)
             if os.path.isfile("/tmp/dvswitch-repo"):
                 os.chmod("/tmp/dvswitch-repo", 0o755)
                 _run_cmd(["/tmp/dvswitch-repo"], check=False)
@@ -1478,14 +1482,7 @@ def _run_install_worker(cfg: dict) -> None:
                 except OSError:
                     pass
 
-            dvs_list = Path("/etc/apt/sources.list.d/dvswitch.list")
-            if dvs_list.is_file():
-                try:
-                    dvs_list.write_text(dvs_list.read_text(encoding="utf-8").replace("trixie", "bookworm"), encoding="utf-8")
-                except OSError:
-                    pass
-
-            _run_cmd(["apt-get", "update", "-y"], check=False)
+            _run_cmd(["apt-get", "update", "-y", "--allow-releaseinfo-change"], check=False)
             if _run_cmd(["apt-get", "install", "-y", "dvswitch-server"], check=False) != 0:
                 _run_cmd(["apt-get", "install", "-y", "mmdvm-bridge", "analog-bridge", "md380-emu", "dvswitch-base"], check=False)
 
@@ -2297,8 +2294,19 @@ def _run_apply_config_worker(cfg: dict) -> None:
         _set_step(3, "Restart Configured Services")
         _run_cmd(["systemctl", "restart", "asterisk.service"])
         if d["enabled"]:
-            for svc in ("md380-emu.service", "analog_bridge.service", "mmdvm_bridge.service"):
-                _run_cmd(["systemctl", "restart", svc], check=False)
+            dvs_units = ("md380-emu.service", "analog_bridge.service", "mmdvm_bridge.service")
+            found_any_dvs = False
+            for svc in dvs_units:
+                check_unit = subprocess.run(
+                    ["systemctl", "cat", svc],
+                    capture_output=True,
+                    text=True,
+                )
+                if check_unit.returncode == 0:
+                    found_any_dvs = True
+                    _run_cmd(["systemctl", "restart", svc], check=False)
+            if not found_any_dvs:
+                _append_log("[WARN] DVSwitch Server packages are not installed on this host yet. Run the Full Installer once to install dvswitch-server, or disable DVSwitch in Step 3 if you only need AllStarLink + MMDVMHost.")
         if m["enabled"]:
             _run_cmd(["systemctl", "daemon-reload"], check=False)
             _run_cmd(["systemctl", "restart", "mmdvmhost.service"], check=False)
