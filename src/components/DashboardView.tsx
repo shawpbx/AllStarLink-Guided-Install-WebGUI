@@ -1,11 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
-  ArrowRight,
-  Check,
-  CheckCircle2,
-  Copy,
   Download,
   DownloadCloud,
   Eye,
@@ -14,11 +10,13 @@ import {
   Link2,
   Loader2,
   Lock,
+  Pause,
   Play,
   Plus,
   RefreshCw,
   RotateCw,
   Save,
+  Search,
   ShieldCheck,
   SlidersHorizontal,
   Square,
@@ -36,12 +34,13 @@ import {
 import {
   generateInstallScript,
   generateStandaloneDashboardHtml,
-  normalizeGitHubRepo,
 } from '../utils/generators';
 import { downloadTextFile } from '../utils/download';
 import {
   AslCommandAction,
+  ConnectedAslNode,
   LocalNodeController,
+  MmdvmUserActivity,
   ServiceAction,
 } from '../hooks/useLocalNode';
 
@@ -64,6 +63,37 @@ const SERVICE_UNITS = new Set([
   'mmdvmhost',
 ]);
 
+type MmdvmFilter = 'ALL' | 'DMR' | 'YSF' | 'D-Star' | 'OTHER';
+
+function formatUptime(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds)) return '—';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h ${mins}m`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
+
+function formatServiceLabel(state: string | undefined): {
+  label: string;
+  tone: string;
+} {
+  if (state === 'active') {
+    return { label: 'Running', tone: 'text-emerald-700 dark:text-emerald-400' };
+  }
+  if (state === 'activating') {
+    return { label: 'Restarting', tone: 'text-amber-700 dark:text-amber-400' };
+  }
+  if (state === 'failed') {
+    return { label: 'Failed', tone: 'text-red-700 dark:text-red-400' };
+  }
+  if (state) {
+    return { label: 'Stopped', tone: 'text-slate-500 dark:text-slate-400' };
+  }
+  return { label: 'Unknown', tone: 'text-slate-500 dark:text-slate-400' };
+}
+
 export function DashboardView({
   config,
   issues,
@@ -73,7 +103,18 @@ export function DashboardView({
   onSwitchView,
   onJumpToStep,
 }: DashboardViewProps) {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  // AllStarLink status filters & link controls
+  const [selectedLocalNode, setSelectedLocalNode] = useState<string>('ALL');
+  const [aslSearch, setAslSearch] = useState('');
+  const [controlNode, setControlNode] = useState('');
+  const [targetNode, setTargetNode] = useState('');
+  const [aslOutput, setAslOutput] = useState<string | null>(null);
+
+  // MMDVM active users filters
+  const [mmdvmFilter, setMmdvmFilter] = useState<MmdvmFilter>('ALL');
+  const [mmdvmSearch, setMmdvmSearch] = useState('');
+
+  // Add Node inline form
   const [showAddNode, setShowAddNode] = useState(false);
   const [newNodeNum, setNewNodeNum] = useState('');
   const [newNodePass, setNewNodePass] = useState('');
@@ -84,7 +125,7 @@ export function DashboardView({
     useState<ExtraAllStarNode['duplexMode']>('0');
   const [addNodeError, setAddNodeError] = useState<string | null>(null);
 
-  // Inline local node unlock & actions
+  // Admin auth & action feedback
   const [authPass, setAuthPass] = useState('');
   const [authConfirm, setAuthConfirm] = useState('');
   const [showPass, setShowPass] = useState(false);
@@ -94,12 +135,7 @@ export function DashboardView({
     text: string;
   } | null>(null);
 
-  // Live Asterisk link control
-  const [controlNode, setControlNode] = useState('');
-  const [targetNode, setTargetNode] = useState('');
-  const [aslOutput, setAslOutput] = useState<string | null>(null);
-
-  const { platform, allstar, dvswitch, mmdvmhost, security } = config;
+  const { platform, allstar, dvswitch, mmdvmhost } = config;
   const additionalNodes = Array.isArray(allstar.additionalNodes)
     ? allstar.additionalNodes
     : [];
@@ -107,33 +143,99 @@ export function DashboardView({
   const errors = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');
   const scriptName = `install-asl-${allstar.nodeNumber || 'node'}.sh`;
-  const repoSlug =
-    normalizeGitHubRepo(platform.githubRepo) ||
-    'shawpbx/AllStarLink-Guided-Install-WebGUI';
-  const branch = platform.githubBranch.trim() || 'main';
 
-  const allConfiguredNodeNums = [
-    ...(allstar.nodeNumber.trim() ? [allstar.nodeNumber.trim()] : []),
-    ...additionalNodes
-      .map((n) => n.nodeNumber.trim())
-      .filter((n) => n.length > 0),
-  ];
+  const live = localNode.liveTelemetry;
+  const liveServices = live?.services || localNode.liveServices;
+  const asteriskState = liveServices?.asterisk;
+  const mmdvmhostState = live?.mmdvm.mmdvmhostState || liveServices?.mmdvmhost;
+  const mmdvmBridgeState =
+    live?.mmdvm.mmdvmBridgeState || liveServices?.mmdvm_bridge;
+  const anyMmdvmActive =
+    mmdvmhostState === 'active' || mmdvmBridgeState === 'active';
+
+  const allConfiguredNodeNums = useMemo(() => {
+    const nums = [
+      ...(allstar.nodeNumber.trim() ? [allstar.nodeNumber.trim()] : []),
+      ...additionalNodes
+        .map((n) => n.nodeNumber.trim())
+        .filter((n) => n.length > 0),
+    ];
+    return Array.from(new Set(nums));
+  }, [allstar.nodeNumber, additionalNodes]);
+
+  const liveAslNodes = useMemo(
+    () => live?.allstar.nodes || [],
+    [live?.allstar.nodes]
+  );
+
+  const controlNodeOptions = useMemo(() => {
+    const merged = [
+      ...liveAslNodes.map((n) => n.node),
+      ...localNode.detectedNodes,
+      ...allConfiguredNodeNums,
+    ];
+    return Array.from(new Set(merged)).filter(Boolean);
+  }, [liveAslNodes, localNode.detectedNodes, allConfiguredNodeNums]);
+
   const activeControlNode =
-    controlNode && allConfiguredNodeNums.includes(controlNode)
+    controlNode && controlNodeOptions.includes(controlNode)
       ? controlNode
-      : allConfiguredNodeNums[0] || localNode.detectedNodes[0] || '';
+      : controlNodeOptions[0] || '';
 
+  // Flatten connected AllStarLink nodes with their parent local node
+  const visibleConnectedNodes = useMemo(() => {
+    const rows: { localNodeId: string; conn: ConnectedAslNode }[] = [];
+    const q = aslSearch.trim().toLowerCase();
+    for (const local of liveAslNodes) {
+      if (selectedLocalNode !== 'ALL' && local.node !== selectedLocalNode) {
+        continue;
+      }
+      for (const conn of local.connectedNodes) {
+        if (q) {
+          const hay = `${conn.node} ${conn.callsign} ${conn.peer} ${conn.mode} ${local.node}`.toLowerCase();
+          if (!hay.includes(q)) continue;
+        }
+        rows.push({ localNodeId: local.node, conn });
+      }
+    }
+    rows.sort((a, b) => Number(b.conn.keyed) - Number(a.conn.keyed));
+    return rows;
+  }, [liveAslNodes, selectedLocalNode, aslSearch]);
+
+  // Combine MMDVM active transmissions + recent heard users
+  const visibleMmdvmUsers = useMemo(() => {
+    const active = live?.mmdvm.activeTransmissions || [];
+    const recent = live?.mmdvm.recentUsers || [];
+    const combined: MmdvmUserActivity[] = [...active, ...recent];
+    const q = mmdvmSearch.trim().toLowerCase();
+    return combined.filter((u) => {
+      if (mmdvmFilter === 'DMR' && u.modeGroup !== 'DMR') return false;
+      if (mmdvmFilter === 'YSF' && u.modeGroup !== 'YSF') return false;
+      if (mmdvmFilter === 'D-Star' && u.modeGroup !== 'D-Star') return false;
+      if (
+        mmdvmFilter === 'OTHER' &&
+        (u.modeGroup === 'DMR' ||
+          u.modeGroup === 'YSF' ||
+          u.modeGroup === 'D-Star')
+      ) {
+        return false;
+      }
+      if (q) {
+        const hay = `${u.callsign} ${u.dmrId} ${u.target} ${u.mode} ${u.service}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [live?.mmdvm.activeTransmissions, live?.mmdvm.recentUsers, mmdvmFilter, mmdvmSearch]);
+
+  const activeMmdvmCount = live?.mmdvm.activeTransmissions.length || 0;
+  const heardMmdvmCount = live?.mmdvm.recentUsers.length || 0;
+  const totalConnectedAsl = live?.allstar.totalConnected || 0;
   const isJobRunning = localNode.installJob.status === 'running';
 
   const openStep = (step: WizardStep) => {
     onJumpToStep(step);
     onSwitchView('configure');
-  };
-
-  const copyCmd = (id: string, cmd: string) => {
-    navigator.clipboard.writeText(cmd);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 1800);
   };
 
   const handleAddNodeSubmit = (e: React.FormEvent) => {
@@ -228,14 +330,14 @@ export function DashboardView({
     if (!localNode.authenticated) {
       setActionMessage({
         type: 'err',
-        text: 'Unlock the local node session below before applying config changes.',
+        text: 'Unlock the local admin session below before applying config changes.',
       });
       return;
     }
     if (errors.length > 0) {
       setActionMessage({
         type: 'err',
-        text: `Fix ${errors.length} required field(s) in the Pre-Flight Checklist first.`,
+        text: `Fix ${errors.length} required configuration field(s) first.`,
       });
       return;
     }
@@ -271,12 +373,12 @@ export function DashboardView({
       onLoadConfigFromHost(res.config);
       setActionMessage({
         type: 'ok',
-        text: 'Loaded saved node configuration from this Raspberry Pi / Debian host.',
+        text: 'Loaded saved configuration from this host.',
       });
     } else {
       setActionMessage({
         type: 'err',
-        text: 'No saved config found on host yet. Click Apply Config Changes to save your current configuration.',
+        text: 'No saved config found on host yet.',
       });
     }
   };
@@ -284,9 +386,9 @@ export function DashboardView({
   const handleServiceAction = async (
     unitKey: string,
     action: ServiceAction,
-    e: React.MouseEvent
+    e?: React.MouseEvent
   ) => {
-    e.stopPropagation();
+    e?.stopPropagation();
     setActionBusy(`${unitKey}-${action}`);
     setActionMessage(null);
     const res = await localNode.controlService(unitKey, action);
@@ -294,7 +396,7 @@ export function DashboardView({
     if (res.ok) {
       setActionMessage({
         type: 'ok',
-        text: `${unitKey}.service ${action} succeeded (${res.state || 'updated'}).`,
+        text: `${unitKey}.service ${action} completed (${res.state || 'updated'}).`,
       });
     } else {
       setActionMessage({
@@ -304,15 +406,17 @@ export function DashboardView({
     }
   };
 
-  const handleAslCommand = async (action: AslCommandAction) => {
-    if (!activeControlNode) return;
-    setActionBusy(`asl-${action}`);
+  const handleAslCommand = async (
+    action: AslCommandAction,
+    overrideLocalNode?: string,
+    overrideTarget?: string
+  ) => {
+    const localId = overrideLocalNode || activeControlNode;
+    const remoteId = (overrideTarget ?? targetNode).trim();
+    if (!localId) return;
+    setActionBusy(`asl-${action}-${remoteId}`);
     setAslOutput(null);
-    const res = await localNode.runAslCommand(
-      activeControlNode,
-      action,
-      targetNode.trim()
-    );
+    const res = await localNode.runAslCommand(localId, action, remoteId);
     setActionBusy(null);
     if (res.ok) {
       setAslOutput(res.output || 'Command sent to Asterisk.');
@@ -325,164 +429,176 @@ export function DashboardView({
     unit: string;
     role: string;
     enabled: boolean;
-    configPath: string;
     port: string;
     step: WizardStep;
   }[] = [
     {
-      unit: 'asterisk.service',
-      role: 'AllStarLink 3 Core (app_rpt / IAX2)',
+      unit: 'asterisk',
+      role: 'AllStarLink 3 (app_rpt / IAX2)',
       enabled: true,
-      configPath: '/etc/asterisk/rpt.conf',
       port: `${allstar.iaxPort}/udp`,
       step: 2,
     },
     {
-      unit: 'allmon3.service',
-      role: 'Allmon3 Node Monitor',
-      enabled: platform.installAllmon3,
-      configPath: '/etc/allmon3/allmon3.ini',
-      port: '80/tcp',
-      step: 1,
-    },
-    {
-      unit: 'mmdvm_bridge.service',
-      role: 'DVSwitch Digital Gateway',
-      enabled: dvswitch.enabled,
-      configPath: '/opt/MMDVM_Bridge/MMDVM_Bridge.ini',
-      port: `${dvswitch.dmrMasterPort}/udp`,
-      step: 3,
-    },
-    {
-      unit: 'analog_bridge.service',
-      role: 'DVSwitch USRP / AMBE Audio Bridge',
-      enabled: dvswitch.enabled,
-      configPath: '/opt/Analog_Bridge/Analog_Bridge.ini',
-      port: `${dvswitch.usrpTxPort}/${dvswitch.usrpRxPort}`,
-      step: 3,
-    },
-    {
-      unit: 'md380-emu.service',
-      role: 'Software AMBE Vocoder Emulator',
-      enabled: dvswitch.enabled && dvswitch.vocoderMode === 'md380-emu',
-      configPath: '127.0.0.1:2470',
-      port: '2470/udp',
-      step: 3,
-    },
-    {
-      unit: 'mmdvmhost.service',
-      role: 'MMDVMHost RF Modem Controller',
+      unit: 'mmdvmhost',
+      role: 'MMDVMHost RF Modem',
       enabled: mmdvmhost.enabled,
-      configPath: '/etc/mmdvm/MMDVM.ini',
       port: mmdvmhost.modemPort,
       step: 3,
     },
     {
-      unit: 'ufw.service',
-      role: 'Host Firewall Rules',
-      enabled: security.enableUfw,
-      configPath: '/etc/ufw/user.rules',
-      port: `SSH ${platform.sshPort}/tcp`,
-      step: 4,
+      unit: 'mmdvm_bridge',
+      role: 'DVSwitch Digital Gateway',
+      enabled: dvswitch.enabled,
+      port: `${dvswitch.dmrMasterPort}/udp`,
+      step: 3,
+    },
+    {
+      unit: 'analog_bridge',
+      role: 'DVSwitch USRP Audio Bridge',
+      enabled: dvswitch.enabled,
+      port: `${dvswitch.usrpTxPort}/${dvswitch.usrpRxPort}`,
+      step: 3,
+    },
+    {
+      unit: 'md380-emu',
+      role: 'AMBE Vocoder Emulator',
+      enabled: dvswitch.enabled && dvswitch.vocoderMode === 'md380-emu',
+      port: '2470/udp',
+      step: 3,
+    },
+    {
+      unit: 'allmon3',
+      role: 'Allmon3 Web Monitor',
+      enabled: platform.installAllmon3,
+      port: '80/tcp',
+      step: 1,
     },
   ];
 
-  const deploySteps = [
-    {
-      id: 'github',
-      title:
-        '01. Install or Update WebGUI from GitHub (Raspberry Pi OS / Debian 13)',
-      detail: `Clones or updates ${repoSlug} (${branch}), builds the WebGUI, and runs asl-webgui.service on port ${platform.dashboardPort}.`,
-      cmd: `# One-line GitHub install:\ncurl -fsSL https://raw.githubusercontent.com/${repoSlug}/${branch}/install.sh | sudo bash -s -- --repo ${repoSlug} --port ${platform.dashboardPort}\n\n# Or update an existing install:\ncd /opt/allstarlink-webgui && sudo git pull && sudo bash install.sh`,
-    },
-    {
-      id: 'verify',
-      title: '02. Verify Active Nodes & Allmon3',
-      detail: `Forward ${allstar.iaxPort}/udp on your router for inbound IAX2 links and inspect active nodes.`,
-      cmd: `sudo asterisk -rx "rpt nodes ${allstar.nodeNumber || '<NODE>'}"${mmdvmhost.enabled ? '\nsudo systemctl status mmdvmhost' : ''}\n# WebGUI URL: http://<node-ip>:${platform.dashboardPort}`,
-    },
-  ];
+  const aslStatusMeta = formatServiceLabel(asteriskState);
+  const mmdvmStatusMeta = formatServiceLabel(
+    mmdvmhostState === 'active'
+      ? 'active'
+      : mmdvmBridgeState === 'active'
+        ? 'active'
+        : mmdvmhostState || mmdvmBridgeState
+  );
+
+  const lastUpdatedLabel = live?.timestamp
+    ? new Date(live.timestamp).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    : null;
 
   return (
     <div className="space-y-6">
-      {/* Top Hero Summary & Primary Actions */}
+      {/* Top Status Header & 4-Column Live Summary Strip */}
       <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-6">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="space-y-1.5">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1">
             <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 flex-wrap">
-              <span>{platformMeta?.label}</span>
-              <span aria-hidden="true">·</span>
               <span className="font-mono">
-                {localNode.hostname || platform.hostname}
+                {live?.hostname || localNode.hostname || platform.hostname}
               </span>
               <span aria-hidden="true">·</span>
-              <span>{platform.timezone}</span>
-              {localNode.localNodeAvailable && (
+              <span>{platformMeta?.label}</span>
+              {live?.uptimeSeconds != null && (
                 <>
                   <span aria-hidden="true">·</span>
-                  <span className="text-emerald-700 dark:text-emerald-400 font-medium inline-flex items-center gap-1">
-                    <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                    Live Host Connected
+                  <span className="font-mono tabular-nums">
+                    Uptime {formatUptime(live.uptimeSeconds)}
+                  </span>
+                </>
+              )}
+              {live?.cpuTempC != null && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono tabular-nums">
+                    CPU {live.cpuTempC.toFixed(1)}°C
+                  </span>
+                </>
+              )}
+              {lastUpdatedLabel && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono tabular-nums">
+                    Updated {lastUpdatedLabel}
                   </span>
                 </>
               )}
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-              Node {allstar.nodeNumber || 'Unassigned'}
-              {allstar.callsign ? ` (${allstar.callsign})` : ''}{' '}
-              {additionalNodes.length > 0
-                ? `+ ${additionalNodes.length} More`
-                : ''}{' '}
-              Dashboard
+              AllStarLink &amp; MMDVM Status
+              {allstar.callsign ? ` — ${allstar.callsign}` : ''}
             </h1>
-            <p className="text-sm text-slate-600 dark:text-slate-400 max-w-2xl">
-              Add or delete AllStarLink nodes, edit configuration files, and
-              reload services on this host without reinstalling packages.
-            </p>
           </div>
 
-          <div className="flex items-center gap-2.5 flex-wrap shrink-0">
-            <button
-              type="button"
-              onClick={() => openStep(2)}
-              className="min-h-[42px] px-4 py-2 text-xs font-semibold rounded-md border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-2 transition-colors whitespace-nowrap"
-            >
-              <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
-              Edit Config
-            </button>
-
-            {localNode.localNodeAvailable ? (
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
+            {localNode.localNodeAvailable && (
               <>
                 <button
                   type="button"
-                  onClick={handleApplyConfigOnly}
-                  disabled={isJobRunning || actionBusy === 'apply'}
-                  className="min-h-[42px] px-4 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-2 disabled:opacity-50 transition-colors whitespace-nowrap"
+                  onClick={() => localNode.setAutoRefresh(!localNode.autoRefresh)}
+                  className="min-h-[38px] px-3 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap"
                 >
-                  {isJobRunning || actionBusy === 'apply' ? (
+                  {localNode.autoRefresh ? (
                     <>
-                      <Loader2
-                        className="w-4 h-4 animate-spin"
-                        aria-hidden="true"
-                      />
-                      Applying Config...
+                      <Pause className="w-3.5 h-3.5" aria-hidden="true" />
+                      Auto 5s
                     </>
                   ) : (
                     <>
-                      <Save className="w-4 h-4" aria-hidden="true" />
-                      Apply Config Changes
+                      <Play className="w-3.5 h-3.5" aria-hidden="true" />
+                      Paused
                     </>
                   )}
                 </button>
                 <button
                   type="button"
-                  onClick={() => onSwitchView('installer')}
-                  className="min-h-[42px] px-3.5 py-2 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap"
+                  onClick={() => localNode.refreshLive()}
+                  disabled={localNode.liveLoading}
+                  className="min-h-[38px] px-3 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap disabled:opacity-60"
                 >
-                  <Play className="w-3.5 h-3.5" aria-hidden="true" />
-                  Full Installer
+                  <RefreshCw
+                    className={`w-3.5 h-3.5 ${localNode.liveLoading ? 'animate-spin' : ''}`}
+                    aria-hidden="true"
+                  />
+                  Refresh
                 </button>
               </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => openStep(2)}
+              className="min-h-[38px] px-3.5 py-1.5 text-xs font-semibold rounded-md border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
+              Edit Config
+            </button>
+
+            {localNode.localNodeAvailable ? (
+              <button
+                type="button"
+                onClick={handleApplyConfigOnly}
+                disabled={isJobRunning || actionBusy === 'apply'}
+                className="min-h-[38px] px-4 py-1.5 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
+              >
+                {isJobRunning || actionBusy === 'apply' ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+                    Applying...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-3.5 h-3.5" aria-hidden="true" />
+                    Apply Config Changes
+                  </>
+                )}
+              </button>
             ) : (
               <>
                 <button
@@ -494,9 +610,9 @@ export function DashboardView({
                       'text/html'
                     )
                   }
-                  className="min-h-[42px] px-4 py-2 text-xs font-semibold rounded-md border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-2 transition-colors whitespace-nowrap"
+                  className="min-h-[38px] px-3.5 py-1.5 text-xs font-semibold rounded-md border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap"
                 >
-                  <FileCode2 className="w-4 h-4" aria-hidden="true" />
+                  <FileCode2 className="w-3.5 h-3.5" aria-hidden="true" />
                   Export HTML
                 </button>
                 <button
@@ -508,125 +624,630 @@ export function DashboardView({
                       'text/x-shellscript'
                     )
                   }
-                  className="min-h-[42px] px-4 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-2 transition-colors whitespace-nowrap"
+                  className="min-h-[38px] px-4 py-1.5 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-1.5 whitespace-nowrap"
                 >
-                  <Download className="w-4 h-4" aria-hidden="true" />
-                  Download Installer (.sh)
+                  <Download className="w-3.5 h-3.5" aria-hidden="true" />
+                  Download Installer
                 </button>
               </>
             )}
           </div>
         </div>
 
-        {/* Key Metric Strip */}
-        <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800 grid grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* 4-Column Live Status Strip */}
+        <div className="mt-5 pt-5 border-t border-slate-100 dark:border-slate-800 grid grid-cols-2 lg:grid-cols-4 gap-6">
           <div>
             <span className="text-xs text-slate-500 dark:text-slate-400">
-              AllStarLink Nodes
+              AllStarLink Service
             </span>
-            <p className="mt-1 text-base font-semibold font-mono tabular-nums text-slate-900 dark:text-slate-100">
-              {allConfiguredNodeNums.length} Configured · IAX {allstar.iaxPort}
+            <p
+              className={`mt-1 text-base font-semibold font-mono tabular-nums ${
+                localNode.localNodeAvailable
+                  ? aslStatusMeta.tone
+                  : 'text-slate-900 dark:text-slate-100'
+              }`}
+            >
+              {localNode.localNodeAvailable
+                ? `${aslStatusMeta.label} · ${totalConnectedAsl} Linked`
+                : `${allConfiguredNodeNums.length} Node(s) Configured`}
             </p>
             <span className="text-xs text-slate-500 dark:text-slate-400">
-              {localNode.detectedNodes.length > 0
-                ? `Active in rpt.conf: ${localNode.detectedNodes.join(', ')}`
-                : `Primary: ${allstar.nodeNumber || 'Unset'} (${allstar.radioInterface})`}
+              {liveAslNodes.length > 0
+                ? liveAslNodes
+                    .map((n) => `${n.node} (${n.registered})`)
+                    .slice(0, 2)
+                    .join(' · ')
+                : `Primary Node ${allstar.nodeNumber || 'Unset'} · IAX ${allstar.iaxPort}`}
             </span>
           </div>
 
           <div>
             <span className="text-xs text-slate-500 dark:text-slate-400">
-              DVSwitch Bridge
+              MMDVM Digital Voice
+            </span>
+            <p
+              className={`mt-1 text-base font-semibold font-mono tabular-nums ${
+                localNode.localNodeAvailable
+                  ? mmdvmStatusMeta.tone
+                  : 'text-slate-900 dark:text-slate-100'
+              }`}
+            >
+              {localNode.localNodeAvailable
+                ? `${mmdvmStatusMeta.label} · ${activeMmdvmCount} Live`
+                : mmdvmhost.enabled
+                  ? `${(Number(mmdvmhost.rxFrequencyHz || 0) / 1e6).toFixed(4)} MHz`
+                  : 'Disabled'}
+            </p>
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              {localNode.localNodeAvailable
+                ? `${heardMmdvmCount} recent heard · ${mmdvmhost.modemPort}`
+                : mmdvmhost.enabled
+                  ? `${mmdvmhost.modemPort} · DMR CC ${mmdvmhost.dmrColorCode}`
+                  : 'Enable in Configure → Step 3'}
+            </span>
+          </div>
+
+          <div>
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              Hosted Local Nodes
             </span>
             <p className="mt-1 text-base font-semibold font-mono tabular-nums text-slate-900 dark:text-slate-100">
+              {controlNodeOptions.length > 0
+                ? controlNodeOptions.join(', ')
+                : 'None'}
+            </p>
+            <span className="text-xs text-slate-500 dark:text-slate-400">
               {dvswitch.enabled
-                ? `${dvswitch.defaultMode} · TG ${dvswitch.dmrDefaultTg}`
-                : 'Disabled'}
-            </p>
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              {dvswitch.enabled
-                ? dvswitch.bridgeArch === 'private-node'
-                  ? `Private Node ${dvswitch.privateNodeNumber || 'Unset'}`
-                  : 'Direct USRP Bridge'
-                : 'Enable in Configure → Step 3'}
+                ? `DVSwitch ${dvswitch.defaultMode} · TG ${dvswitch.dmrDefaultTg}`
+                : `Driver: ${allstar.radioInterface}`}
             </span>
           </div>
 
           <div>
             <span className="text-xs text-slate-500 dark:text-slate-400">
-              MMDVMHost RF
+              Configuration Health
             </span>
-            <p className="mt-1 text-base font-semibold font-mono tabular-nums text-slate-900 dark:text-slate-100">
-              {mmdvmhost.enabled
-                ? mmdvmhost.rxFrequencyHz
-                  ? `${(Number(mmdvmhost.rxFrequencyHz) / 1e6).toFixed(4)} MHz`
-                  : 'Freq Unset'
-                : 'Disabled'}
-            </p>
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              {mmdvmhost.enabled
-                ? `${mmdvmhost.modemPort} · ${mmdvmhost.modemBaud} baud`
-                : 'Optional GPIO / USB Modem'}
-            </span>
-          </div>
-
-          <div>
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              Config Readiness
-            </span>
-            <p className="mt-1 text-base font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-              {errors.length === 0 ? (
-                <>
-                  <CheckCircle2
-                    className="w-4 h-4 text-emerald-600 dark:text-emerald-400"
-                    aria-hidden="true"
-                  />
-                  <span>
-                    {warnings.length > 0
-                      ? `${warnings.length} Warnings`
-                      : 'Ready'}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <AlertCircle
-                    className="w-4 h-4 text-red-600 dark:text-red-400"
-                    aria-hidden="true"
-                  />
-                  <span>{errors.length} Required Fields</span>
-                </>
-              )}
+            <p className="mt-1 text-base font-semibold text-slate-900 dark:text-slate-100 font-mono tabular-nums">
+              {errors.length === 0
+                ? warnings.length > 0
+                  ? `Valid · ${warnings.length} Warn`
+                  : 'Valid'
+                : `${errors.length} Required`}
             </p>
             <span className="text-xs text-slate-500 dark:text-slate-400">
               {errors.length > 0
-                ? 'Complete highlighted items below'
-                : 'All syntax & port checks passed'}
+                ? 'Review required fields below'
+                : localNode.localNodeAvailable
+                  ? 'Edits apply without reinstalling'
+                  : 'Ready to export or install'}
             </span>
           </div>
         </div>
       </section>
 
-      {/* Local Host Session Bar (Unlock / Load Saved Config / Live Job Feedback) */}
+      {/* PRIMARY LIVE STATUS GRID: AllStarLink Connected Nodes + MMDVM Active Users */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+        {/* LEFT PANEL: AllStarLink Connected Nodes */}
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-6 space-y-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap pb-4 border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                AllStarLink Connected Nodes
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                {localNode.localNodeAvailable
+                  ? `Live links reported by Asterisk app_rpt · ${totalConnectedAsl} connected`
+                  : 'Live connected nodes display automatically when opened on your AllStarLink node.'}
+              </p>
+            </div>
+            <div className="relative">
+              <Search
+                className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2"
+                aria-hidden="true"
+              />
+              <input
+                type="text"
+                value={aslSearch}
+                onChange={(e) => setAslSearch(e.target.value)}
+                placeholder="Filter node or call..."
+                aria-label="Filter connected AllStarLink nodes"
+                className="min-h-[34px] w-44 pl-8 pr-2.5 py-1 text-xs rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
+              />
+            </div>
+          </div>
+
+          {/* Local node selector tabs when multiple local nodes exist */}
+          {liveAslNodes.length > 1 && (
+            <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-md w-fit flex-wrap">
+              <button
+                type="button"
+                onClick={() => setSelectedLocalNode('ALL')}
+                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap ${
+                  selectedLocalNode === 'ALL'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                }`}
+              >
+                All ({totalConnectedAsl})
+              </button>
+              {liveAslNodes.map((n) => (
+                <button
+                  key={n.node}
+                  type="button"
+                  onClick={() => setSelectedLocalNode(n.node)}
+                  className={`px-2.5 py-1 text-xs font-mono font-medium rounded transition-colors whitespace-nowrap ${
+                    selectedLocalNode === n.node
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                  }`}
+                >
+                  Node {n.node} ({n.connectedCount})
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Connected Nodes Table / States */}
+          {!localNode.localNodeAvailable ? (
+            <div className="py-8 text-center space-y-2">
+              <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                Preview Mode — Not Connected to a Raspberry Pi Node
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                Open this WebGUI directly on your node at{' '}
+                <span className="font-mono">
+                  http://&lt;node-ip&gt;:{platform.dashboardPort}
+                </span>{' '}
+                to see real-time AllStarLink connected nodes, IAX2 registration,
+                and link controls.
+              </p>
+            </div>
+          ) : asteriskState !== 'active' ? (
+            <div className="py-6 space-y-3">
+              <div className="flex items-start gap-2.5 text-xs text-amber-800 dark:text-amber-300">
+                <AlertTriangle
+                  className="w-4 h-4 shrink-0 mt-0.5"
+                  aria-hidden="true"
+                />
+                <div>
+                  <p className="font-semibold">
+                    asterisk.service is currently {asteriskState || 'stopped'}.
+                  </p>
+                  <p className="text-slate-600 dark:text-slate-400 mt-0.5">
+                    Start Asterisk to bring your AllStarLink node(s) online and
+                    query connected links.
+                  </p>
+                </div>
+              </div>
+              {localNode.authenticated && (
+                <button
+                  type="button"
+                  onClick={() => handleServiceAction('asterisk', 'start')}
+                  disabled={actionBusy !== null}
+                  className="min-h-[36px] px-3.5 py-1.5 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-1.5"
+                >
+                  <Play className="w-3.5 h-3.5" aria-hidden="true" />
+                  Start Asterisk
+                </button>
+              )}
+            </div>
+          ) : visibleConnectedNodes.length === 0 ? (
+            <div className="py-8 text-center space-y-1.5">
+              <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                {aslSearch.trim()
+                  ? 'No connected nodes match that filter'
+                  : 'No Remote Nodes Currently Connected'}
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {aslSearch.trim()
+                  ? 'Clear the filter to view all linked nodes.'
+                  : liveAslNodes.length > 0
+                    ? `Listening on ${liveAslNodes
+                        .map((n) => `Node ${n.node} (${n.registered})`)
+                        .join(', ')}. Use Connect (*3) below to link a node.`
+                    : 'Asterisk is running. Use Connect (*3) below to establish a link.'}
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                    <th className="py-2 font-medium">Node #</th>
+                    <th className="py-2 font-medium">Callsign / Peer</th>
+                    <th className="py-2 font-medium">Mode</th>
+                    <th className="py-2 font-medium">Dir</th>
+                    <th className="py-2 font-medium text-right">Elapsed</th>
+                    {localNode.authenticated && (
+                      <th className="py-2 font-medium text-right">Link</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                  {visibleConnectedNodes.map(({ localNodeId, conn }) => (
+                    <tr
+                      key={`${localNodeId}-${conn.node}`}
+                      className={`h-10 ${
+                        conn.keyed
+                          ? 'bg-emerald-50/60 dark:bg-emerald-950/20'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <td className="py-2 pr-3 font-mono font-semibold tabular-nums text-slate-900 dark:text-slate-100 whitespace-nowrap">
+                        {conn.node}
+                        {liveAslNodes.length > 1 && (
+                          <span className="ml-1.5 text-[11px] font-normal text-slate-400">
+                            via {localNodeId}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 text-slate-700 dark:text-slate-300">
+                        <div className="font-medium truncate max-w-[180px]">
+                          {conn.callsign || conn.peer || '—'}
+                        </div>
+                        {conn.callsign && conn.peer && conn.peer !== '—' && (
+                          <div className="font-mono text-[11px] text-slate-400">
+                            {conn.peer}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap">
+                        <span
+                          className={
+                            conn.keyed
+                              ? 'font-semibold text-emerald-700 dark:text-emerald-400'
+                              : 'text-slate-700 dark:text-slate-300'
+                          }
+                        >
+                          {conn.keyed ? 'RX Keyed' : conn.mode}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        {conn.direction}
+                      </td>
+                      <td className="py-2 text-right font-mono tabular-nums text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                        {conn.elapsed}
+                      </td>
+                      {localNode.authenticated && (
+                        <td className="py-2 pl-3 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleAslCommand(
+                                'disconnect',
+                                localNodeId,
+                                conn.node
+                              )
+                            }
+                            disabled={actionBusy !== null}
+                            className="text-xs font-medium text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                          >
+                            Drop
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Quick Link Control Bar */}
+          {localNode.localNodeAvailable && activeControlNode && (
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+              {localNode.authenticated ? (
+                <>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select
+                      aria-label="Local AllStarLink node"
+                      value={activeControlNode}
+                      onChange={(e) => setControlNode(e.target.value)}
+                      className="min-h-[34px] px-2.5 py-1 text-xs font-mono rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+                    >
+                      {controlNodeOptions.map((n) => (
+                        <option key={n} value={n}>
+                          Node {n}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={targetNode}
+                      onChange={(e) =>
+                        setTargetNode(
+                          e.target.value.replace(/\D/g, '').slice(0, 6)
+                        )
+                      }
+                      placeholder="Target node #"
+                      aria-label="Target AllStarLink node number"
+                      className="min-h-[34px] w-32 px-2.5 py-1 text-xs font-mono rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAslCommand('connect')}
+                      disabled={!targetNode.trim() || actionBusy !== null}
+                      className="min-h-[34px] px-3 py-1 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 inline-flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <Link2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      Connect (*3)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAslCommand('monitor')}
+                      disabled={!targetNode.trim() || actionBusy !== null}
+                      className="min-h-[34px] px-3 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      Monitor (*2)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAslCommand('disconnect')}
+                      disabled={!targetNode.trim() || actionBusy !== null}
+                      className="min-h-[34px] px-2.5 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 inline-flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <Unlink className="w-3.5 h-3.5" aria-hidden="true" />
+                      *1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAslCommand('disconnect_all')}
+                      disabled={actionBusy !== null}
+                      className="min-h-[34px] px-2.5 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      Drop All (*71)
+                    </button>
+                  </div>
+                  {aslOutput && (
+                    <pre className="p-2.5 rounded-md bg-slate-950 text-slate-100 text-xs font-mono overflow-x-auto whitespace-pre-wrap">
+                      {aslOutput}
+                    </pre>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Unlock the local admin session below to connect, monitor, or
+                  disconnect AllStarLink nodes.
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* RIGHT PANEL: MMDVM Active & Last Heard Users */}
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-6 space-y-4">
+          <div className="flex items-start justify-between gap-4 flex-wrap pb-4 border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                MMDVM Active &amp; Last Heard Users
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                {localNode.localNodeAvailable
+                  ? `MMDVMHost: ${mmdvmhostState || 'inactive'} · MMDVM_Bridge: ${mmdvmBridgeState || 'inactive'}`
+                  : 'Live RF and network digital voice users display automatically on your node.'}
+              </p>
+            </div>
+            <div className="relative">
+              <Search
+                className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2"
+                aria-hidden="true"
+              />
+              <input
+                type="text"
+                value={mmdvmSearch}
+                onChange={(e) => setMmdvmSearch(e.target.value)}
+                placeholder="Filter callsign or TG..."
+                aria-label="Filter MMDVM active and heard users"
+                className="min-h-[34px] w-44 pl-8 pr-2.5 py-1 text-xs rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
+              />
+            </div>
+          </div>
+
+          {/* Segmented Mode Filter */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800/80 rounded-md">
+              {(
+                [
+                  { id: 'ALL', label: 'All Modes' },
+                  { id: 'DMR', label: 'DMR' },
+                  { id: 'YSF', label: 'YSF' },
+                  { id: 'D-Star', label: 'D-Star' },
+                  { id: 'OTHER', label: 'P25 / NXDN' },
+                ] as { id: MmdvmFilter; label: string }[]
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setMmdvmFilter(tab.id)}
+                  className={`px-2.5 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap ${
+                    mmdvmFilter === tab.id
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
+              {activeMmdvmCount} active · {heardMmdvmCount} heard
+            </span>
+          </div>
+
+          {/* Inline Diagnostic if MMDVMHost is failing/stopped with a captured journal error */}
+          {localNode.localNodeAvailable &&
+            mmdvmhostState !== 'active' &&
+            live?.mmdvm.lastError && (
+              <div className="p-3 rounded-md border border-amber-200 dark:border-amber-900/60 bg-amber-50/70 dark:bg-amber-950/25 flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex items-start gap-2 text-xs text-amber-900 dark:text-amber-300 min-w-0">
+                  <AlertTriangle
+                    className="w-4 h-4 shrink-0 mt-0.5"
+                    aria-hidden="true"
+                  />
+                  <div className="min-w-0">
+                    <p className="font-semibold">
+                      mmdvmhost.service ({mmdvmhostState || 'stopped'})
+                    </p>
+                    <p className="font-mono text-[11px] break-all mt-0.5">
+                      {live.mmdvm.lastError}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openStep(3)}
+                  className="text-xs font-semibold text-sky-700 dark:text-sky-400 hover:underline whitespace-nowrap shrink-0"
+                >
+                  Edit Modem Port →
+                </button>
+              </div>
+            )}
+
+          {/* Active & Last Heard Users Table / States */}
+          {!localNode.localNodeAvailable ? (
+            <div className="py-8 text-center space-y-2">
+              <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                Preview Mode — Live MMDVM Traffic Unavailable
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                Once running on your Raspberry Pi or Debian host, active
+                transmissions and last-heard DMR, YSF, D-Star, P25, and NXDN
+                users stream automatically from{' '}
+                <span className="font-mono">mmdvmhost</span> and{' '}
+                <span className="font-mono">mmdvm_bridge</span>.
+              </p>
+            </div>
+          ) : visibleMmdvmUsers.length === 0 ? (
+            <div className="py-8 text-center space-y-2">
+              <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                {mmdvmSearch.trim() || mmdvmFilter !== 'ALL'
+                  ? 'No MMDVM activity matches this filter'
+                  : anyMmdvmActive
+                    ? 'Standing By — No Active Users Yet'
+                    : 'MMDVM Services Stopped'}
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                {mmdvmSearch.trim() || mmdvmFilter !== 'ALL'
+                  ? 'Reset the mode filter or search text to see all heard users.'
+                  : anyMmdvmActive
+                    ? 'Listening for RF and network digital voice headers. Active transmissions and last-heard callsigns will populate here automatically.'
+                    : 'Start mmdvmhost or mmdvm_bridge in the Service Controls below, or configure your modem port in Step 3 (use "null" if no RF hat is connected yet).'}
+              </p>
+              {!anyMmdvmActive && localNode.authenticated && (
+                <div className="pt-2 flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleServiceAction('mmdvmhost', 'start')}
+                    disabled={actionBusy !== null}
+                    className="min-h-[34px] px-3 py-1 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-1.5"
+                  >
+                    <Play className="w-3.5 h-3.5" aria-hidden="true" />
+                    Start MMDVMHost
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openStep(3)}
+                    className="min-h-[34px] px-3 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                  >
+                    Configure MMDVM
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                    <th className="py-2 font-medium">State</th>
+                    <th className="py-2 font-medium">Callsign / ID</th>
+                    <th className="py-2 font-medium">Mode</th>
+                    <th className="py-2 font-medium">Target</th>
+                    <th className="py-2 font-medium">Src</th>
+                    <th className="py-2 font-medium text-right">Duration</th>
+                    <th className="py-2 font-medium text-right">Time</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                  {visibleMmdvmUsers.map((user) => (
+                    <tr
+                      key={user.id}
+                      className={`h-10 ${
+                        user.active
+                          ? 'bg-emerald-50/70 dark:bg-emerald-950/25'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <td className="py-2 pr-2 whitespace-nowrap">
+                        <span
+                          className={`font-semibold ${
+                            user.active
+                              ? 'text-emerald-700 dark:text-emerald-400'
+                              : 'text-slate-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {user.active ? 'TX Live' : 'Heard'}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap">
+                        <div className="font-mono font-semibold text-slate-900 dark:text-slate-100">
+                          {user.callsign}
+                        </div>
+                        {user.dmrId && user.dmrId !== user.callsign && (
+                          <div className="font-mono text-[11px] text-slate-400 tabular-nums">
+                            ID {user.dmrId}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-2 pr-3 font-mono text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                        {user.mode}
+                      </td>
+                      <td className="py-2 pr-3 font-mono tabular-nums text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                        {user.target}
+                      </td>
+                      <td className="py-2 pr-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        {user.source}
+                      </td>
+                      <td className="py-2 pr-3 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                        <div>{user.duration}</div>
+                        {user.ber !== '—' && (
+                          <div className="text-[11px] text-slate-400">
+                            BER {user.ber}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-2 text-right font-mono tabular-nums text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        {user.timestamp}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {/* Local Admin Session Bar (Unlock / Load Config / Live Apply Job Status) */}
       {localNode.localNodeAvailable && (
-        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 space-y-4">
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 space-y-3">
           {!localNode.authenticated ? (
             <form
               onSubmit={handleInlineAuth}
-              className="flex flex-col md:flex-row md:items-end justify-between gap-4"
+              className="flex flex-col md:flex-row md:items-center justify-between gap-4"
             >
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   {localNode.authConfigured
-                    ? 'Unlock Local Host for Config Updates & Live Controls'
-                    : 'First-Run Setup: Create Local Admin Password'}
+                    ? 'Unlock Admin Controls'
+                    : 'Set Local Admin Password'}
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Unlock once to apply config changes without reinstalling
-                  packages, restart services, or connect/disconnect AllStarLink
-                  nodes.
+                  Unlock to connect/disconnect AllStarLink nodes, restart
+                  services, or apply config edits without reinstalling packages.
                 </p>
               </div>
-              <div className="flex items-end gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
                 <div className="relative">
                   <input
                     type={showPass ? 'text' : 'password'}
@@ -683,11 +1304,8 @@ export function DashboardView({
                   aria-hidden="true"
                 />
                 <span>
-                  Local admin session unlocked on{' '}
+                  Admin controls unlocked on{' '}
                   <strong className="font-mono">{localNode.hostname}</strong>.
-                  Config edits apply directly to{' '}
-                  <span className="font-mono">/etc/asterisk</span> and reload
-                  services without reinstalling packages.
                 </span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -703,16 +1321,15 @@ export function DashboardView({
                     ) : (
                       <DownloadCloud className="w-3.5 h-3.5" />
                     )}
-                    Load Saved Node Config
+                    Load Saved Config
                   </button>
                 )}
                 <button
                   type="button"
-                  onClick={() => localNode.refreshNode()}
-                  className="min-h-[34px] px-3 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap"
+                  onClick={() => onSwitchView('installer')}
+                  className="min-h-[34px] px-3 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
-                  Refresh Status
+                  Installer &amp; Logs
                 </button>
                 <button
                   type="button"
@@ -740,399 +1357,270 @@ export function DashboardView({
           )}
 
           {localNode.authenticated && localNode.installJob.status !== 'idle' && (
-            <div className="flex items-center justify-between gap-3 flex-wrap pt-3 border-t border-slate-100 dark:border-slate-800 text-xs">
-              <div className="flex items-center gap-2 font-medium">
-                {localNode.installJob.status === 'running' && (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 text-sky-600 animate-spin" />
-                    <span>
-                      Step {localNode.installJob.stepIndex}/
-                      {localNode.installJob.totalSteps}:{' '}
-                      {localNode.installJob.step}
-                    </span>
-                  </>
-                )}
-                {localNode.installJob.status === 'succeeded' && (
-                  <>
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    <span className="text-emerald-700 dark:text-emerald-400">
-                      {localNode.installJob.totalSteps === 3
-                        ? 'Config changes applied and services reloaded.'
-                        : 'Full installation completed.'}
-                    </span>
-                  </>
-                )}
-                {localNode.installJob.status === 'failed' && (
-                  <>
-                    <AlertCircle className="w-3.5 h-3.5 text-red-600" />
-                    <span className="text-red-700 dark:text-red-400">
-                      Last job failed: {localNode.installJob.error}
-                    </span>
-                  </>
-                )}
-              </div>
+            <div className="flex items-center justify-between gap-3 flex-wrap pt-2.5 border-t border-slate-100 dark:border-slate-800 text-xs">
+              <span className="font-medium text-slate-700 dark:text-slate-300">
+                {localNode.installJob.status === 'running'
+                  ? `Running Step ${localNode.installJob.stepIndex}/${localNode.installJob.totalSteps}: ${localNode.installJob.step}`
+                  : localNode.installJob.status === 'succeeded'
+                    ? localNode.installJob.totalSteps === 3
+                      ? 'Configuration changes applied and services reloaded.'
+                      : 'Full installation completed.'
+                    : `Last job failed: ${localNode.installJob.error}`}
+              </span>
               <button
                 type="button"
                 onClick={() => onSwitchView('installer')}
-                className="text-xs font-medium text-sky-700 dark:text-sky-400 hover:underline"
+                className="text-xs font-medium text-sky-700 dark:text-sky-400 hover:underline whitespace-nowrap"
               >
-                View Live Log ({localNode.installJob.logs.length} lines) →
+                View Log ({localNode.installJob.logs.length} lines) →
               </button>
             </div>
           )}
         </section>
       )}
 
-      {/* AllStarLink Nodes Manager (Add / Edit / Delete Nodes) */}
-      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-6 space-y-4">
-        <div className="flex items-center justify-between gap-4 flex-wrap pb-4 border-b border-slate-100 dark:border-slate-800">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-              Configured AllStarLink Nodes
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Add or remove public and private nodes hosted on this server, then
-              click <strong>Apply Config Changes</strong> to reload Asterisk.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setShowAddNode((v) => !v);
-              setAddNodeError(null);
-            }}
-            className="min-h-[36px] px-3.5 py-1.5 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center gap-1.5 whitespace-nowrap"
-          >
-            <Plus className="w-3.5 h-3.5" aria-hidden="true" />
-            Add Node
-          </button>
-        </div>
-
-        {/* Inline Add Node Form */}
-        {showAddNode && (
-          <form
-            onSubmit={handleAddNodeSubmit}
-            className="p-4 rounded-md border border-sky-200 dark:border-sky-900/60 bg-sky-50/40 dark:bg-sky-950/20 space-y-3"
-          >
-            <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Node Number
-                </label>
-                <input
-                  type="text"
-                  value={newNodeNum}
-                  onChange={(e) =>
-                    setNewNodeNum(e.target.value.replace(/\D/g, '').slice(0, 6))
-                  }
-                  placeholder="e.g. 55554 or 1998"
-                  className="w-full min-h-[38px] px-3 py-1.5 text-xs font-mono rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  IAX Password
-                </label>
-                <input
-                  type="password"
-                  value={newNodePass}
-                  onChange={(e) => setNewNodePass(e.target.value)}
-                  placeholder="Blank if private"
-                  className="w-full min-h-[38px] px-3 py-1.5 text-xs font-mono rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Description
-                </label>
-                <input
-                  type="text"
-                  value={newNodeDesc}
-                  onChange={(e) => setNewNodeDesc(e.target.value)}
-                  placeholder="Hub / UHF / Link"
-                  className="w-full min-h-[38px] px-3 py-1.5 text-xs rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Audio Driver
-                </label>
-                <select
-                  value={newNodeDriver}
-                  onChange={(e) =>
-                    setNewNodeDriver(
-                      e.target.value as ExtraAllStarNode['radioInterface']
-                    )
-                  }
-                  className="w-full min-h-[38px] px-2.5 py-1.5 text-xs rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-                >
-                  <option value="pseudo">DAHDI Pseudo (Hub)</option>
-                  <option value="simpleusb">SimpleUSB</option>
-                  <option value="usbradio">USBRadio</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Duplex
-                </label>
-                <select
-                  value={newNodeDuplex}
-                  onChange={(e) =>
-                    setNewNodeDuplex(
-                      e.target.value as ExtraAllStarNode['duplexMode']
-                    )
-                  }
-                  className="w-full min-h-[38px] px-2.5 py-1.5 text-xs rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-                >
-                  <option value="0">0 — Hub / No Telem</option>
-                  <option value="1">1 — Simplex</option>
-                  <option value="2">2 — Repeater</option>
-                </select>
-              </div>
-            </div>
-            {addNodeError && (
-              <p className="text-xs text-red-600 dark:text-red-400">
-                {addNodeError}
+      {/* SECONDARY OPERATIONS ROW: Local Nodes Manager + Systemd Service Controls */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+        {/* Configured AllStarLink Nodes (Add / Delete without Reinstalling) */}
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-6 space-y-4">
+          <div className="flex items-center justify-between gap-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                Local AllStarLink Nodes
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Add or delete nodes on this host, then click Apply Config
+                Changes.
               </p>
-            )}
-            <div className="flex items-center gap-2">
-              <button
-                type="submit"
-                className="min-h-[36px] px-4 py-1.5 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white"
-              >
-                Add Node to Config
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowAddNode(false)}
-                className="min-h-[36px] px-3 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
-              >
-                Cancel
-              </button>
             </div>
-          </form>
-        )}
+            <button
+              type="button"
+              onClick={() => {
+                setShowAddNode((v) => !v);
+                setAddNodeError(null);
+              }}
+              className="min-h-[34px] px-3 py-1 text-xs font-semibold rounded-md border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+              Add Node
+            </button>
+          </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead>
-              <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                <th className="py-2 font-medium">Node #</th>
-                <th className="py-2 font-medium">Role / Label</th>
-                <th className="py-2 font-medium">Audio Driver</th>
-                <th className="py-2 font-medium">Duplex</th>
-                <th className="py-2 font-medium">Registration</th>
-                <th className="py-2 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
-              {/* Primary Node */}
-              <tr className="h-11">
-                <td className="py-2 pr-3 font-mono font-semibold text-slate-900 dark:text-slate-100">
-                  {allstar.nodeNumber || 'Unset'}
-                </td>
-                <td className="py-2 pr-3 text-slate-700 dark:text-slate-300">
-                  Primary Node{allstar.callsign ? ` (${allstar.callsign})` : ''}
-                </td>
-                <td className="py-2 pr-3 font-mono text-slate-600 dark:text-slate-300">
-                  {dvswitch.enabled && dvswitch.bridgeArch === 'direct-usrp'
-                    ? 'USRP Direct'
-                    : allstar.radioInterface}
-                </td>
-                <td className="py-2 pr-3 font-mono text-slate-600 dark:text-slate-300">
-                  Mode {allstar.duplexMode}
-                </td>
-                <td className="py-2 pr-3 text-slate-600 dark:text-slate-300">
-                  {allstar.nodePassword ? 'IAX2 Registered' : 'Private / Unset'}
-                </td>
-                <td className="py-2 text-right whitespace-nowrap">
-                  <button
-                    type="button"
-                    onClick={() => openStep(2)}
-                    className="text-xs font-medium text-sky-700 dark:text-sky-400 hover:underline"
+          {showAddNode && (
+            <form
+              onSubmit={handleAddNodeSubmit}
+              className="p-4 rounded-md border border-sky-200 dark:border-sky-900/60 bg-sky-50/40 dark:bg-sky-950/20 space-y-3"
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Node Number
+                  </label>
+                  <input
+                    type="text"
+                    value={newNodeNum}
+                    onChange={(e) =>
+                      setNewNodeNum(
+                        e.target.value.replace(/\D/g, '').slice(0, 6)
+                      )
+                    }
+                    placeholder="55554 or 1998"
+                    className="w-full min-h-[36px] px-2.5 py-1 text-xs font-mono rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    IAX Password
+                  </label>
+                  <input
+                    type="password"
+                    value={newNodePass}
+                    onChange={(e) => setNewNodePass(e.target.value)}
+                    placeholder="Blank if private"
+                    className="w-full min-h-[36px] px-2.5 py-1 text-xs font-mono rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Label
+                  </label>
+                  <input
+                    type="text"
+                    value={newNodeDesc}
+                    onChange={(e) => setNewNodeDesc(e.target.value)}
+                    placeholder="Hub / UHF / Link"
+                    className="w-full min-h-[36px] px-2.5 py-1 text-xs rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Audio Driver
+                  </label>
+                  <select
+                    value={newNodeDriver}
+                    onChange={(e) =>
+                      setNewNodeDriver(
+                        e.target.value as ExtraAllStarNode['radioInterface']
+                      )
+                    }
+                    className="w-full min-h-[36px] px-2.5 py-1 text-xs rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
                   >
-                    Edit →
-                  </button>
-                </td>
-              </tr>
+                    <option value="pseudo">DAHDI Pseudo (Hub)</option>
+                    <option value="simpleusb">SimpleUSB</option>
+                    <option value="usbradio">USBRadio</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Duplex Mode
+                  </label>
+                  <select
+                    value={newNodeDuplex}
+                    onChange={(e) =>
+                      setNewNodeDuplex(
+                        e.target.value as ExtraAllStarNode['duplexMode']
+                      )
+                    }
+                    className="w-full min-h-[36px] px-2.5 py-1 text-xs rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+                  >
+                    <option value="0">0 — Hub / No Telemetry</option>
+                    <option value="1">1 — Simplex</option>
+                    <option value="2">2 — Repeater</option>
+                  </select>
+                </div>
+              </div>
+              {addNodeError && (
+                <p className="text-xs text-red-600 dark:text-red-400">
+                  {addNodeError}
+                </p>
+              )}
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  className="min-h-[34px] px-3.5 py-1 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white"
+                >
+                  Add to Config
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddNode(false)}
+                  className="min-h-[34px] px-3 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
 
-              {/* Additional Nodes */}
-              {additionalNodes.map((extra) => (
-                <tr key={extra.id} className="h-11">
-                  <td className="py-2 pr-3 font-mono font-semibold text-slate-900 dark:text-slate-100">
-                    {extra.nodeNumber || 'Unset'}
-                  </td>
-                  <td className="py-2 pr-3 text-slate-700 dark:text-slate-300">
-                    {extra.description || 'Additional AllStarLink Node'}
-                  </td>
-                  <td className="py-2 pr-3 font-mono text-slate-600 dark:text-slate-300">
-                    {extra.radioInterface}
-                  </td>
-                  <td className="py-2 pr-3 font-mono text-slate-600 dark:text-slate-300">
-                    Mode {extra.duplexMode}
-                  </td>
-                  <td className="py-2 pr-3 text-slate-600 dark:text-slate-300">
-                    {extra.nodePassword ? 'IAX2 Registered' : 'Private / Local'}
-                  </td>
-                  <td className="py-2 text-right whitespace-nowrap">
-                    <div className="inline-flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => openStep(2)}
-                        className="text-xs font-medium text-sky-700 dark:text-sky-400 hover:underline"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleDeleteExtraNode(extra.id, extra.nodeNumber)
-                        }
-                        className="text-xs font-medium text-red-600 dark:text-red-400 hover:underline inline-flex items-center gap-1"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                        Delete
-                      </button>
-                    </div>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                  <th className="py-2 font-medium">Node #</th>
+                  <th className="py-2 font-medium">Role</th>
+                  <th className="py-2 font-medium">Driver</th>
+                  <th className="py-2 font-medium text-right">Actions</th>
                 </tr>
-              ))}
-
-              {/* DVSwitch Private Node */}
-              {dvswitch.enabled && dvswitch.bridgeArch === 'private-node' && (
-                <tr className="h-11">
-                  <td className="py-2 pr-3 font-mono font-semibold text-slate-900 dark:text-slate-100">
-                    {dvswitch.privateNodeNumber || 'Unset'}
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                <tr className="h-10">
+                  <td className="py-2 pr-3 font-mono font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                    {allstar.nodeNumber || 'Unset'}
                   </td>
                   <td className="py-2 pr-3 text-slate-700 dark:text-slate-300">
-                    DVSwitch Bridge ({dvswitch.defaultMode} · TG{' '}
-                    {dvswitch.dmrDefaultTg})
+                    Primary{allstar.callsign ? ` (${allstar.callsign})` : ''}
                   </td>
                   <td className="py-2 pr-3 font-mono text-slate-600 dark:text-slate-300">
-                    USRP {dvswitch.usrpTxPort}/{dvswitch.usrpRxPort}
-                  </td>
-                  <td className="py-2 pr-3 font-mono text-slate-600 dark:text-slate-300">
-                    Mode 0
-                  </td>
-                  <td className="py-2 pr-3 text-slate-600 dark:text-slate-300">
-                    Private Bridge
+                    {dvswitch.enabled && dvswitch.bridgeArch === 'direct-usrp'
+                      ? 'USRP'
+                      : allstar.radioInterface}
                   </td>
                   <td className="py-2 text-right whitespace-nowrap">
                     <button
                       type="button"
-                      onClick={() => openStep(3)}
+                      onClick={() => openStep(2)}
                       className="text-xs font-medium text-sky-700 dark:text-sky-400 hover:underline"
                     >
-                      Configure →
+                      Edit
                     </button>
                   </td>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
 
-        {/* Live AllStarLink Link Control (when unlocked & Asterisk active) */}
-        {localNode.localNodeAvailable &&
-          localNode.authenticated &&
-          activeControlNode && (
-            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                  Live AllStarLink Link Control
-                </span>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <select
-                    aria-label="Local node to control"
-                    value={activeControlNode}
-                    onChange={(e) => setControlNode(e.target.value)}
-                    className="min-h-[34px] px-2.5 py-1 text-xs font-mono rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-                  >
-                    {(allConfiguredNodeNums.length > 0
-                      ? allConfiguredNodeNums
-                      : localNode.detectedNodes
-                    ).map((n) => (
-                      <option key={n} value={n}>
-                        Node {n}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="text"
-                    value={targetNode}
-                    onChange={(e) =>
-                      setTargetNode(
-                        e.target.value.replace(/\D/g, '').slice(0, 6)
-                      )
-                    }
-                    placeholder="Target node #"
-                    className="min-h-[34px] w-32 px-2.5 py-1 text-xs font-mono rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleAslCommand('connect')}
-                    disabled={!targetNode.trim() || actionBusy !== null}
-                    className="min-h-[34px] px-3 py-1 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 inline-flex items-center gap-1"
-                  >
-                    <Link2 className="w-3.5 h-3.5" aria-hidden="true" />
-                    Connect (*3)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleAslCommand('monitor')}
-                    disabled={!targetNode.trim() || actionBusy !== null}
-                    className="min-h-[34px] px-3 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
-                  >
-                    Monitor (*2)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleAslCommand('disconnect')}
-                    disabled={!targetNode.trim() || actionBusy !== null}
-                    className="min-h-[34px] px-3 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 inline-flex items-center gap-1"
-                  >
-                    <Unlink className="w-3.5 h-3.5" aria-hidden="true" />
-                    Disconnect (*1)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleAslCommand('disconnect_all')}
-                    disabled={actionBusy !== null}
-                    className="min-h-[34px] px-3 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50"
-                  >
-                    Drop All (*71)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleAslCommand('nodes')}
-                    disabled={actionBusy !== null}
-                    className="min-h-[34px] px-3 py-1 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
-                  >
-                    Active Links
-                  </button>
-                </div>
-              </div>
-              {aslOutput && (
-                <pre className="p-2.5 rounded-md bg-slate-950 text-slate-100 text-xs font-mono overflow-x-auto whitespace-pre-wrap">
-                  {aslOutput}
-                </pre>
-              )}
-            </div>
-          )}
-      </section>
+                {additionalNodes.map((extra) => (
+                  <tr key={extra.id} className="h-10">
+                    <td className="py-2 pr-3 font-mono font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                      {extra.nodeNumber || 'Unset'}
+                    </td>
+                    <td className="py-2 pr-3 text-slate-700 dark:text-slate-300">
+                      {extra.description || 'Additional Node'}
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-slate-600 dark:text-slate-300">
+                      {extra.radioInterface}
+                    </td>
+                    <td className="py-2 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => openStep(2)}
+                          className="text-xs font-medium text-sky-700 dark:text-sky-400 hover:underline"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDeleteExtraNode(extra.id, extra.nodeNumber)
+                          }
+                          className="text-xs font-medium text-red-600 dark:text-red-400 hover:underline inline-flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
 
-      {/* Middle Split: Service Matrix + Validation Checklist */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-6 items-start">
-        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-6">
-          <div className="flex items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+                {dvswitch.enabled && dvswitch.bridgeArch === 'private-node' && (
+                  <tr className="h-10">
+                    <td className="py-2 pr-3 font-mono font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                      {dvswitch.privateNodeNumber || 'Unset'}
+                    </td>
+                    <td className="py-2 pr-3 text-slate-700 dark:text-slate-300">
+                      DVSwitch ({dvswitch.defaultMode} · TG{' '}
+                      {dvswitch.dmrDefaultTg})
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-slate-600 dark:text-slate-300">
+                      USRP
+                    </td>
+                    <td className="py-2 text-right whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => openStep(3)}
+                        className="text-xs font-medium text-sky-700 dark:text-sky-400 hover:underline"
+                      >
+                        Edit
+                      </button>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* Systemd Service Status & Controls */}
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-6 space-y-4">
+          <div className="flex items-center justify-between gap-4 pb-3 border-b border-slate-100 dark:border-slate-800">
             <div>
               <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                Systemd Service Stack
+                Service Health &amp; Controls
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Click any row to edit its settings, or use live service controls
-                when unlocked on this host.
+                Live systemd units for AllStarLink, MMDVMHost, and DVSwitch.
               </p>
             </div>
             <button
@@ -1140,70 +1628,64 @@ export function DashboardView({
               onClick={() => onSwitchView('configs')}
               className="text-xs font-medium text-sky-700 dark:text-sky-400 hover:underline whitespace-nowrap"
             >
-              Inspect Config Files →
+              View Configs →
             </button>
           </div>
 
-          <div className="mt-3 overflow-x-auto">
+          <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
               <thead>
                 <tr className="text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                  <th className="py-2.5 font-medium">Service Unit</th>
-                  <th className="py-2.5 font-medium">Role</th>
-                  <th className="py-2.5 font-medium">Port / Device</th>
-                  <th className="py-2.5 font-medium text-right">State</th>
+                  <th className="py-2 font-medium">Service</th>
+                  <th className="py-2 font-medium">Port / Device</th>
+                  <th className="py-2 font-medium text-right">Status</th>
                   {localNode.localNodeAvailable && localNode.authenticated && (
-                    <th className="py-2.5 font-medium text-right">Control</th>
+                    <th className="py-2 font-medium text-right">Control</th>
                   )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
                 {serviceRows.map((row) => {
-                  const unitKey = row.unit.replace(/\.service$/, '');
-                  const liveState = localNode.liveServices?.[unitKey];
+                  const liveState = liveServices?.[row.unit];
+                  const statusMeta = formatServiceLabel(liveState);
                   const controllable =
                     localNode.localNodeAvailable &&
                     localNode.authenticated &&
-                    SERVICE_UNITS.has(unitKey);
+                    SERVICE_UNITS.has(row.unit);
 
                   return (
                     <tr
                       key={row.unit}
                       onClick={() => openStep(row.step)}
-                      className="h-11 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors"
+                      className="h-10 hover:bg-slate-50 dark:hover:bg-slate-800/40 cursor-pointer"
                     >
-                      <td className="py-2 pr-3 font-mono font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap">
-                        {row.unit}
-                      </td>
-                      <td className="py-2 pr-3 text-slate-600 dark:text-slate-300">
-                        <div>{row.role}</div>
-                        <div className="font-mono text-[11px] text-slate-400">
-                          {row.configPath}
+                      <td className="py-2 pr-3">
+                        <div className="font-mono font-semibold text-slate-900 dark:text-slate-100">
+                          {row.unit}.service
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                          {row.role}
                         </div>
                       </td>
-                      <td className="py-2 pr-3 font-mono tabular-nums text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                      <td className="py-2 pr-3 font-mono tabular-nums text-slate-600 dark:text-slate-300 whitespace-nowrap">
                         {row.port}
                       </td>
                       <td className="py-2 text-right whitespace-nowrap">
                         {liveState ? (
                           <span
-                            className={`font-mono font-medium ${
-                              liveState === 'active'
-                                ? 'text-emerald-700 dark:text-emerald-400'
-                                : 'text-amber-700 dark:text-amber-400'
-                            }`}
+                            className={`font-mono font-semibold ${statusMeta.tone}`}
                           >
-                            {liveState}
+                            {statusMeta.label}
                           </span>
                         ) : (
                           <span
-                            className={`font-medium ${
+                            className={
                               row.enabled
-                                ? 'text-emerald-700 dark:text-emerald-400'
+                                ? 'font-medium text-emerald-700 dark:text-emerald-400'
                                 : 'text-slate-400 dark:text-slate-500'
-                            }`}
+                            }
                           >
-                            {row.enabled ? 'Enabled' : 'Skipped'}
+                            {row.enabled ? 'Enabled' : 'Disabled'}
                           </span>
                         )}
                       </td>
@@ -1214,9 +1696,9 @@ export function DashboardView({
                               <div className="inline-flex items-center gap-1">
                                 <button
                                   type="button"
-                                  title={`Restart ${unitKey}`}
+                                  title={`Restart ${row.unit}`}
                                   onClick={(e) =>
-                                    handleServiceAction(unitKey, 'restart', e)
+                                    handleServiceAction(row.unit, 'restart', e)
                                   }
                                   disabled={actionBusy !== null}
                                   className="p-1.5 rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
@@ -1226,9 +1708,9 @@ export function DashboardView({
                                 {liveState === 'active' ? (
                                   <button
                                     type="button"
-                                    title={`Stop ${unitKey}`}
+                                    title={`Stop ${row.unit}`}
                                     onClick={(e) =>
-                                      handleServiceAction(unitKey, 'stop', e)
+                                      handleServiceAction(row.unit, 'stop', e)
                                     }
                                     disabled={actionBusy !== null}
                                     className="p-1.5 rounded border border-slate-200 dark:border-slate-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50"
@@ -1238,9 +1720,9 @@ export function DashboardView({
                                 ) : (
                                   <button
                                     type="button"
-                                    title={`Start ${unitKey}`}
+                                    title={`Start ${row.unit}`}
                                     onClick={(e) =>
-                                      handleServiceAction(unitKey, 'start', e)
+                                      handleServiceAction(row.unit, 'start', e)
                                     }
                                     disabled={actionBusy !== null}
                                     className="p-1.5 rounded border border-slate-200 dark:border-slate-700 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 disabled:opacity-50"
@@ -1261,120 +1743,55 @@ export function DashboardView({
             </table>
           </div>
         </section>
-
-        {/* Validation & Required Action List */}
-        <aside className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-6 space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-              Pre-Flight Checklist
-            </h2>
-            <span className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
-              {issues.length} {issues.length === 1 ? 'item' : 'items'}
-            </span>
-          </div>
-
-          {issues.length === 0 ? (
-            <div className="py-4 space-y-3">
-              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                All required parameters are valid.{' '}
-                {localNode.localNodeAvailable
-                  ? 'Click Apply Config Changes to update configs without reinstalling packages, or open the Installer tab for a full build.'
-                  : `You can download and run ${scriptName} on a fresh Raspberry Pi or Debian 13 node.`}
-              </p>
-              <button
-                type="button"
-                onClick={() => onSwitchView('installer')}
-                className="w-full min-h-[40px] px-4 py-2 text-xs font-semibold rounded-md bg-sky-700 hover:bg-sky-800 text-white inline-flex items-center justify-center gap-2"
-              >
-                {localNode.localNodeAvailable
-                  ? 'Open Installer & Logs'
-                  : 'Review Installer Script'}
-                <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
-              </button>
-            </div>
-          ) : (
-            <ul className="space-y-2">
-              {issues.map((issue) => (
-                <li key={issue.id}>
-                  <button
-                    type="button"
-                    onClick={() => openStep(issue.step)}
-                    className="w-full text-left p-3 rounded-md border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-                  >
-                    <div className="flex items-start gap-2.5">
-                      {issue.severity === 'error' ? (
-                        <AlertCircle
-                          className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <AlertTriangle
-                          className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5"
-                          aria-hidden="true"
-                        />
-                      )}
-                      <div>
-                        <p className="text-xs text-slate-800 dark:text-slate-200 leading-snug">
-                          {issue.message}
-                        </p>
-                        <span className="mt-1 inline-block text-[11px] font-medium text-sky-700 dark:text-sky-400">
-                          Configure in Step {issue.step} →
-                        </span>
-                      </div>
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </aside>
       </div>
 
-      {/* Deployment & Update Runbook */}
-      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-6">
-        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-          GitHub Update &amp; CLI Reference
-        </h2>
-        <div className="mt-4 divide-y divide-slate-100 dark:divide-slate-800">
-          {deploySteps.map((s) => (
-            <div key={s.id} className="py-4 first:pt-0 last:pb-0 space-y-2">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    {s.title}
-                  </h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                    {s.detail}
+      {/* Compact Validation Issues Strip (only shown when errors or warnings exist) */}
+      {issues.length > 0 && (
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+              Configuration Alerts ({issues.length})
+            </h2>
+            <button
+              type="button"
+              onClick={() => openStep(issues[0].step)}
+              className="text-xs font-medium text-sky-700 dark:text-sky-400 hover:underline"
+            >
+              Fix in Step {issues[0].step} →
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            {issues.map((issue) => (
+              <button
+                key={issue.id}
+                type="button"
+                onClick={() => openStep(issue.step)}
+                className="text-left p-3 rounded-md border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors flex items-start gap-2.5"
+              >
+                {issue.severity === 'error' ? (
+                  <AlertCircle
+                    className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <AlertTriangle
+                    className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5"
+                    aria-hidden="true"
+                  />
+                )}
+                <div className="text-xs">
+                  <p className="text-slate-800 dark:text-slate-200">
+                    {issue.message}
                   </p>
+                  <span className="text-[11px] font-medium text-sky-700 dark:text-sky-400">
+                    Step {issue.step} →
+                  </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => copyCmd(s.id, s.cmd)}
-                  className="min-h-[34px] px-3 py-1 text-xs font-medium rounded-md border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                >
-                  {copiedId === s.id ? (
-                    <>
-                      <Check
-                        className="w-3.5 h-3.5 text-emerald-600"
-                        aria-hidden="true"
-                      />
-                      Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" aria-hidden="true" />
-                      Copy
-                    </>
-                  )}
-                </button>
-              </div>
-              <pre className="p-3 rounded-md bg-slate-950 text-slate-100 text-xs font-mono overflow-x-auto">
-                {s.cmd}
-              </pre>
-            </div>
-          ))}
-        </div>
-      </section>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

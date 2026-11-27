@@ -1602,6 +1602,636 @@ def _detect_rpt_nodes() -> list[str]:
     return found
 
 
+_dmr_id_cache: dict[str, str] = {}
+_dmr_id_mtime: float = 0.0
+_extnodes_cache: dict[str, str] = {}
+_extnodes_mtime: float = 0.0
+
+
+def _load_dmr_id_map() -> dict[str, str]:
+    global _dmr_id_cache, _dmr_id_mtime
+    for candidate in ("/etc/mmdvm/DMRIds.dat", "/var/lib/dvswitch/subscriber_ids.csv"):
+        if os.path.isfile(candidate):
+            try:
+                mtime = os.path.getmtime(candidate)
+                if mtime == _dmr_id_mtime and _dmr_id_cache:
+                    return _dmr_id_cache
+                mapping: dict[str, str] = {}
+                with open(candidate, "r", encoding="utf-8", errors="ignore") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line or line.startswith("#") or line.startswith("RADIO_ID"):
+                            continue
+                        parts = re.split(r"[\t, ]+", line)
+                        if len(parts) >= 2 and parts[0].isdigit():
+                            mapping[parts[0]] = parts[1].strip()
+                _dmr_id_cache = mapping
+                _dmr_id_mtime = mtime
+                return _dmr_id_cache
+            except OSError:
+                continue
+    return _dmr_id_cache
+
+
+def _load_extnodes_map() -> dict[str, str]:
+    global _extnodes_cache, _extnodes_mtime
+    for candidate in ("/var/lib/asterisk/rpt_extnodes", "/tmp/rpt_extnodes"):
+        if os.path.isfile(candidate):
+            try:
+                mtime = os.path.getmtime(candidate)
+                if mtime == _extnodes_mtime and _extnodes_cache:
+                    return _extnodes_cache
+                mapping: dict[str, str] = {}
+                with open(candidate, "r", encoding="utf-8", errors="ignore") as fh:
+                    for line in fh:
+                        m = re.match(r"^\s*(\d{4,6})\s*=\s*[^;]*;\s*(.+)$", line)
+                        if m:
+                            mapping[m.group(1)] = m.group(2).strip()[:64]
+                _extnodes_cache = mapping
+                _extnodes_mtime = mtime
+                return _extnodes_cache
+            except OSError:
+                continue
+    return _extnodes_cache
+
+
+def _read_host_metrics() -> tuple[int | None, float | None]:
+    uptime_s: int | None = None
+    cpu_temp_c: float | None = None
+    try:
+        raw = Path("/proc/uptime").read_text(encoding="utf-8").split()[0]
+        uptime_s = int(float(raw))
+    except Exception:
+        pass
+    try:
+        raw_t = Path("/sys/class/thermal/thermal_zone0/temp").read_text(encoding="utf-8").strip()
+        cpu_temp_c = round(int(raw_t) / 1000.0, 1)
+    except Exception:
+        pass
+    return uptime_s, cpu_temp_c
+
+
+def _collect_allstar_live(asterisk_active: bool) -> dict:
+    local_nodes = _detect_rpt_nodes()
+    if not local_nodes:
+        saved = _load_node_config()
+        if saved and isinstance(saved.get("allstar"), dict):
+            primary = str(saved["allstar"].get("nodeNumber", "")).strip()
+            if re.fullmatch(r"\d{4,6}", primary):
+                local_nodes.append(primary)
+            for extra in saved["allstar"].get("additionalNodes") or []:
+                num = str((extra or {}).get("nodeNumber", "")).strip()
+                if re.fullmatch(r"\d{4,6}", num) and num not in local_nodes:
+                    local_nodes.append(num)
+
+    if not asterisk_active:
+        return {
+            "active": False,
+            "nodes": [
+                {
+                    "node": n,
+                    "registered": "Offline",
+                    "connectedCount": 0,
+                    "connectedNodes": [],
+                    "rawOutput": "",
+                }
+                for n in local_nodes
+            ],
+            "totalConnected": 0,
+        }
+
+    ext_map = _load_extnodes_map()
+
+    # Check IAX2 registration state per node username
+    reg_map: dict[str, str] = {}
+    try:
+        reg_proc = subprocess.run(
+            ["asterisk", "-rx", "iax2 show registry"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        for line in reg_proc.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and re.fullmatch(r"\d{4,6}", parts[2]):
+                reg_map[parts[2]] = " ".join(parts[5:]) if len(parts) >= 6 else parts[4]
+    except Exception:
+        pass
+
+    node_statuses: list[dict] = []
+    total_connected = 0
+
+    for node_id in local_nodes:
+        if not re.fullmatch(r"\d{4,6}", node_id):
+            continue
+        connected_by_id: dict[str, dict] = {}
+        raw_parts: list[str] = []
+
+        # 1. Detailed table via rpt lstats <node>
+        try:
+            lstats_proc = subprocess.run(
+                ["asterisk", "-rx", f"rpt lstats {node_id}"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            out = lstats_proc.stdout.strip()
+            if out:
+                raw_parts.append(out)
+            for line in out.splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.upper().startswith("NODE") or stripped.startswith("-"):
+                    continue
+                cols = stripped.split()
+                if len(cols) >= 2 and re.fullmatch(r"\d{4,6}", cols[0]):
+                    rnode = cols[0]
+                    if rnode == node_id:
+                        continue
+                    peer = cols[1] if len(cols) > 1 else "—"
+                    direction = cols[3] if len(cols) > 3 else "—"
+                    elapsed = cols[4] if len(cols) > 4 else "—"
+                    state = " ".join(cols[5:]) if len(cols) > 5 else "CONNECTED"
+                    connected_by_id[rnode] = {
+                        "node": rnode,
+                        "callsign": ext_map.get(rnode, ""),
+                        "peer": peer,
+                        "mode": "Linked",
+                        "direction": direction,
+                        "elapsed": elapsed,
+                        "state": state,
+                        "keyed": "KEY" in state.upper() and "UNKEY" not in state.upper(),
+                    }
+        except Exception:
+            pass
+
+        # 2. Mode flags (T=Transceive, R/M=Monitor, C=Connecting) & fallback via rpt nodes <node>
+        try:
+            nodes_proc = subprocess.run(
+                ["asterisk", "-rx", f"rpt nodes {node_id}"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            out = nodes_proc.stdout.strip()
+            if out:
+                raw_parts.append(out)
+            for token in re.findall(r"\b([TRMC]?)(\d{4,6})\b", out):
+                prefix, rnode = token
+                if rnode == node_id:
+                    continue
+                # Ignore banner/header numbers if line says "Connected Nodes" only when no nodes
+                if "No connected" in out:
+                    continue
+                mode_label = {
+                    "T": "Transceive",
+                    "R": "Monitor",
+                    "M": "Monitor",
+                    "C": "Connecting",
+                }.get(prefix, "Linked")
+                if rnode in connected_by_id:
+                    if prefix:
+                        connected_by_id[rnode]["mode"] = mode_label
+                else:
+                    connected_by_id[rnode] = {
+                        "node": rnode,
+                        "callsign": ext_map.get(rnode, ""),
+                        "peer": "—",
+                        "mode": mode_label,
+                        "direction": "—",
+                        "elapsed": "—",
+                        "state": "CONNECTED",
+                        "keyed": False,
+                    }
+        except Exception:
+            pass
+
+        # 3. Check keyed status via rpt xnode <node> if supported
+        try:
+            xnode_proc = subprocess.run(
+                ["asterisk", "-rx", f"rpt xnode {node_id}"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            for line in xnode_proc.stdout.splitlines():
+                # Formats like: 55553&T&1&... or keyed flags
+                m_key = re.match(r"^\s*(\d{4,6})\s+.*(KEYED|RX)", line, re.IGNORECASE)
+                if m_key and m_key.group(1) in connected_by_id:
+                    connected_by_id[m_key.group(1)]["keyed"] = True
+        except Exception:
+            pass
+
+        conn_list = list(connected_by_id.values())
+        total_connected += len(conn_list)
+        reg_state = reg_map.get(node_id)
+        if not reg_state:
+            reg_state = "Private / Local" if int(node_id) < 2000 else "Active"
+
+        node_statuses.append({
+            "node": node_id,
+            "registered": reg_state,
+            "connectedCount": len(conn_list),
+            "connectedNodes": conn_list,
+            "rawOutput": "\n".join(raw_parts)[:2000],
+        })
+
+    return {
+        "active": True,
+        "nodes": node_statuses,
+        "totalConnected": total_connected,
+    }
+
+
+def _parse_log_timestamp(line: str) -> tuple[str, float]:
+    # Try MMDVM internal UTC timestamp: "M: 2026-11-26 16:30:12.345 ..."
+    m_inner = re.search(r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})", line)
+    if m_inner:
+        ts_str = m_inner.group(1)
+        try:
+            dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            return dt.strftime("%H:%M:%S UTC"), dt.timestamp()
+        except ValueError:
+            return ts_str, time.time()
+    # Try journalctl short-iso prefix: "2026-11-26T16:30:12-0800 ..."
+    m_iso = re.match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:?\d{2})", line)
+    if m_iso:
+        raw_iso = m_iso.group(1)
+        try:
+            if len(raw_iso) >= 5 and raw_iso[-3] != ":":
+                raw_iso = raw_iso[:-2] + ":" + raw_iso[-2:]
+            dt = datetime.fromisoformat(raw_iso)
+            return dt.strftime("%H:%M:%S"), dt.timestamp()
+        except ValueError:
+            pass
+    return datetime.now().strftime("%H:%M:%S"), time.time()
+
+
+def _resolve_callsign(raw_id: str, dmr_map: dict[str, str]) -> tuple[str, str]:
+    cleaned = raw_id.strip().rstrip(",")
+    if cleaned.isdigit():
+        return dmr_map.get(cleaned, cleaned), cleaned
+    return cleaned, ""
+
+
+def _parse_mmdvm_lines(lines: list[str], service_label: str, dmr_map: dict[str, str]) -> tuple[list[dict], list[dict], str | None]:
+    active_slots: dict[str, dict] = {}
+    recent: list[dict] = []
+    last_error: str | None = None
+    now_ts = time.time()
+
+    re_dmr_start = re.compile(
+        r"DMR Slot (\d),\s+received (RF|network) (?:voice|data) header from (\S+) to (TG \d+|\S+)",
+        re.IGNORECASE,
+    )
+    re_dmr_end = re.compile(
+        r"DMR Slot (\d),\s+(?:received (RF|network) end of (?:voice|data) transmission|(RF|network) (?:voice|data) transmission lost) from (\S+) to (TG \d+|\S+)(?:,\s*([\d.]+)\s*seconds)?(?:,\s*([\d.]+)%\s*packet loss)?(?:,\s*BER:\s*([\d.]+)%)?",
+        re.IGNORECASE,
+    )
+    re_dmr_wd = re.compile(
+        r"DMR Slot (\d),\s+(RF|network) watchdog has expired(?:,\s*([\d.]+)\s*seconds)?(?:,\s*([\d.]+)%\s*packet loss)?",
+        re.IGNORECASE,
+    )
+    re_ysf_start = re.compile(
+        r"YSF,\s+received (RF|network) (?:header|data) from ([A-Za-z0-9/_-]+)\s+to\s+([A-Za-z0-9/_-]+)",
+        re.IGNORECASE,
+    )
+    re_ysf_end = re.compile(
+        r"YSF,\s+(?:received (RF|network) end of transmission|(RF|network) transmission lost) from ([A-Za-z0-9/_-]+)\s+to\s+([A-Za-z0-9/_-]+)(?:.*?([\d.]+)\s*seconds)?(?:.*?([\d.]+)%\s*packet loss)?(?:.*?BER:\s*([\d.]+)%)?",
+        re.IGNORECASE,
+    )
+    re_dstar_start = re.compile(
+        r"D-Star,\s+received (RF|network) header from ([A-Za-z0-9/_ -]+?)\s+to\s+([A-Za-z0-9/_ -]+?)(?:\s+via|\s*$)",
+        re.IGNORECASE,
+    )
+    re_dstar_end = re.compile(
+        r"D-Star,\s+(?:received (RF|network) end of transmission|(RF|network) transmission lost) from ([A-Za-z0-9/_ -]+?)\s+to\s+([A-Za-z0-9/_ -]+?)(?:,|\s+via|$)(?:.*?([\d.]+)\s*seconds)?(?:.*?([\d.]+)%\s*packet loss)?(?:.*?BER:\s*([\d.]+)%)?",
+        re.IGNORECASE,
+    )
+    re_p25_nxdn_end = re.compile(
+        r"(P25|NXDN),\s+(?:received (RF|network) end of transmission|(RF|network) transmission lost) from (\S+) to (TG \d+|\S+)(?:,\s*([\d.]+)\s*seconds)?(?:,\s*([\d.]+)%\s*packet loss)?(?:,\s*BER:\s*([\d.]+)%)?",
+        re.IGNORECASE,
+    )
+    re_p25_nxdn_start = re.compile(
+        r"(P25|NXDN),\s+received (RF|network) transmission from (\S+) to (TG \d+|\S+)",
+        re.IGNORECASE,
+    )
+
+    for idx, line in enumerate(lines):
+        if (
+            ("E:" in line or "Cannot open" in line or "Unable to" in line or "Could not" in line)
+            and "Scheduled restart" not in line
+            and "Deactivated" not in line
+        ):
+            # Strip journalctl prefix for concise display
+            cleaned_err = re.sub(r"^\S+\s+\S+\s+\S+?:\s*", "", line).strip()
+            if cleaned_err:
+                last_error = cleaned_err[:220]
+
+        ts_label, ts_epoch = _parse_log_timestamp(line)
+
+        m = re_dmr_start.search(line)
+        if m:
+            slot, src, who, target = m.group(1), m.group(2), m.group(3), m.group(4).rstrip(",")
+            call, dmr_id = _resolve_callsign(who, dmr_map)
+            mode = f"DMR Slot {slot}"
+            slot_key = f"{service_label}:{mode}"
+            active_slots[slot_key] = {
+                "id": f"{slot_key}-{idx}",
+                "timestamp": ts_label,
+                "_epoch": ts_epoch,
+                "callsign": call,
+                "dmrId": dmr_id,
+                "mode": mode,
+                "modeGroup": "DMR",
+                "source": "RF" if src.upper() == "RF" else "Net",
+                "target": target,
+                "duration": "Live",
+                "ber": "—",
+                "loss": "—",
+                "active": True,
+                "service": service_label,
+            }
+            continue
+
+        m = re_dmr_end.search(line)
+        if m:
+            slot = m.group(1)
+            src = m.group(2) or m.group(3) or "Net"
+            who = m.group(4)
+            target = m.group(5).rstrip(",")
+            dur = f"{m.group(6)}s" if m.group(6) else "—"
+            loss = f"{m.group(7)}%" if m.group(7) else "—"
+            ber = f"{m.group(8)}%" if m.group(8) else "—"
+            call, dmr_id = _resolve_callsign(who, dmr_map)
+            mode = f"DMR Slot {slot}"
+            slot_key = f"{service_label}:{mode}"
+            active_slots.pop(slot_key, None)
+            recent.append({
+                "id": f"{slot_key}-{idx}",
+                "timestamp": ts_label,
+                "_epoch": ts_epoch,
+                "callsign": call,
+                "dmrId": dmr_id,
+                "mode": mode,
+                "modeGroup": "DMR",
+                "source": "RF" if src.upper() == "RF" else "Net",
+                "target": target,
+                "duration": dur,
+                "ber": ber,
+                "loss": loss,
+                "active": False,
+                "service": service_label,
+            })
+            continue
+
+        m = re_dmr_wd.search(line)
+        if m:
+            slot = m.group(1)
+            slot_key = f"{service_label}:DMR Slot {slot}"
+            prev = active_slots.pop(slot_key, None)
+            if prev:
+                prev["active"] = False
+                prev["duration"] = f"{m.group(3)}s" if m.group(3) else "Watchdog"
+                if m.group(4):
+                    prev["loss"] = f"{m.group(4)}%"
+                recent.append(prev)
+            continue
+
+        m = re_ysf_end.search(line)
+        if m:
+            src = m.group(1) or m.group(2) or "Net"
+            call = m.group(3).strip()
+            target = m.group(4).strip()
+            slot_key = f"{service_label}:YSF"
+            active_slots.pop(slot_key, None)
+            recent.append({
+                "id": f"{slot_key}-{idx}",
+                "timestamp": ts_label,
+                "_epoch": ts_epoch,
+                "callsign": call,
+                "dmrId": "",
+                "mode": "YSF",
+                "modeGroup": "YSF",
+                "source": "RF" if src.upper() == "RF" else "Net",
+                "target": target,
+                "duration": f"{m.group(5)}s" if m.group(5) else "—",
+                "loss": f"{m.group(6)}%" if m.group(6) else "—",
+                "ber": f"{m.group(7)}%" if m.group(7) else "—",
+                "active": False,
+                "service": service_label,
+            })
+            continue
+
+        m = re_ysf_start.search(line)
+        if m:
+            src, call, target = m.group(1), m.group(2).strip(), m.group(3).strip()
+            slot_key = f"{service_label}:YSF"
+            active_slots[slot_key] = {
+                "id": f"{slot_key}-{idx}",
+                "timestamp": ts_label,
+                "_epoch": ts_epoch,
+                "callsign": call,
+                "dmrId": "",
+                "mode": "YSF",
+                "modeGroup": "YSF",
+                "source": "RF" if src.upper() == "RF" else "Net",
+                "target": target,
+                "duration": "Live",
+                "ber": "—",
+                "loss": "—",
+                "active": True,
+                "service": service_label,
+            }
+            continue
+
+        m = re_dstar_end.search(line)
+        if m:
+            src = m.group(1) or m.group(2) or "Net"
+            call = " ".join(m.group(3).split())
+            target = " ".join(m.group(4).split())
+            slot_key = f"{service_label}:D-Star"
+            active_slots.pop(slot_key, None)
+            recent.append({
+                "id": f"{slot_key}-{idx}",
+                "timestamp": ts_label,
+                "_epoch": ts_epoch,
+                "callsign": call,
+                "dmrId": "",
+                "mode": "D-Star",
+                "modeGroup": "D-Star",
+                "source": "RF" if src.upper() == "RF" else "Net",
+                "target": target,
+                "duration": f"{m.group(5)}s" if m.group(5) else "—",
+                "loss": f"{m.group(6)}%" if m.group(6) else "—",
+                "ber": f"{m.group(7)}%" if m.group(7) else "—",
+                "active": False,
+                "service": service_label,
+            })
+            continue
+
+        m = re_dstar_start.search(line)
+        if m:
+            src = m.group(1)
+            call = " ".join(m.group(2).split())
+            target = " ".join(m.group(3).split())
+            slot_key = f"{service_label}:D-Star"
+            active_slots[slot_key] = {
+                "id": f"{slot_key}-{idx}",
+                "timestamp": ts_label,
+                "_epoch": ts_epoch,
+                "callsign": call,
+                "dmrId": "",
+                "mode": "D-Star",
+                "modeGroup": "D-Star",
+                "source": "RF" if src.upper() == "RF" else "Net",
+                "target": target,
+                "duration": "Live",
+                "ber": "—",
+                "loss": "—",
+                "active": True,
+                "service": service_label,
+            }
+            continue
+
+        m = re_p25_nxdn_end.search(line)
+        if m:
+            proto = m.group(1).upper()
+            src = m.group(2) or m.group(3) or "Net"
+            call, dmr_id = _resolve_callsign(m.group(4), dmr_map)
+            target = m.group(5).rstrip(",")
+            slot_key = f"{service_label}:{proto}"
+            active_slots.pop(slot_key, None)
+            recent.append({
+                "id": f"{slot_key}-{idx}",
+                "timestamp": ts_label,
+                "_epoch": ts_epoch,
+                "callsign": call,
+                "dmrId": dmr_id,
+                "mode": proto,
+                "modeGroup": proto,
+                "source": "RF" if src.upper() == "RF" else "Net",
+                "target": target,
+                "duration": f"{m.group(6)}s" if m.group(6) else "—",
+                "loss": f"{m.group(7)}%" if m.group(7) else "—",
+                "ber": f"{m.group(8)}%" if m.group(8) else "—",
+                "active": False,
+                "service": service_label,
+            })
+            continue
+
+        m = re_p25_nxdn_start.search(line)
+        if m:
+            proto, src = m.group(1).upper(), m.group(2)
+            call, dmr_id = _resolve_callsign(m.group(3), dmr_map)
+            target = m.group(4).rstrip(",")
+            slot_key = f"{service_label}:{proto}"
+            active_slots[slot_key] = {
+                "id": f"{slot_key}-{idx}",
+                "timestamp": ts_label,
+                "_epoch": ts_epoch,
+                "callsign": call,
+                "dmrId": dmr_id,
+                "mode": proto,
+                "modeGroup": proto,
+                "source": "RF" if src.upper() == "RF" else "Net",
+                "target": target,
+                "duration": "Live",
+                "ber": "—",
+                "loss": "—",
+                "active": True,
+                "service": service_label,
+            }
+            continue
+
+    active_out: list[dict] = []
+    for entry in active_slots.values():
+        # Expire stale unclosed headers older than 180s
+        if now_ts - entry.get("_epoch", now_ts) > 180:
+            entry["active"] = False
+            entry["duration"] = "—"
+            recent.append(entry)
+        else:
+            active_out.append(entry)
+
+    return active_out, recent, last_error
+
+
+def _read_tail_lines(path: Path, max_lines: int = 250) -> list[str]:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            return fh.readlines()[-max_lines:]
+    except OSError:
+        return []
+
+
+def _collect_mmdvm_live(services: dict[str, str]) -> dict:
+    dmr_map = _load_dmr_id_map()
+    all_active: list[dict] = []
+    all_recent: list[dict] = []
+    last_error: str | None = None
+
+    sources: list[tuple[str, str]] = [
+        ("mmdvmhost", "MMDVMHost"),
+        ("mmdvm_bridge", "MMDVM_Bridge"),
+    ]
+    for unit, label in sources:
+        lines: list[str] = []
+        try:
+            proc = subprocess.run(
+                ["journalctl", "-u", unit, "-n", "250", "--no-pager", "-o", "short-iso"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            if proc.stdout:
+                lines.extend(proc.stdout.splitlines())
+        except Exception:
+            pass
+
+        # Also check newest log file in /var/log/mmdvm for MMDVM_Bridge or legacy MMDVMHost
+        log_dir = Path("/var/log/mmdvm")
+        if log_dir.is_dir():
+            pattern = "MMDVM_Bridge-*.log" if unit == "mmdvm_bridge" else "MMDVM-[0-9]*.log"
+            matches = sorted(log_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+            if matches:
+                lines.extend(_read_tail_lines(matches[0], 250))
+
+        if lines:
+            act, rec, err = _parse_mmdvm_lines(lines, label, dmr_map)
+            all_active.extend(act)
+            all_recent.extend(rec)
+            if unit == "mmdvmhost" and err:
+                last_error = err
+            elif last_error is None and err:
+                last_error = err
+
+    all_active.sort(key=lambda x: x.get("_epoch", 0), reverse=True)
+    all_recent.sort(key=lambda x: x.get("_epoch", 0), reverse=True)
+
+    def _strip_internal(item: dict) -> dict:
+        return {k: v for k, v in item.items() if not k.startswith("_")}
+
+    # Deduplicate adjacent identical entries that appeared in both journal and file logs
+    dedup_recent: list[dict] = []
+    seen_keys: set[tuple] = set()
+    for item in all_recent:
+        k = (item["timestamp"], item["callsign"], item["mode"], item["target"], item["duration"])
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        dedup_recent.append(_strip_internal(item))
+        if len(dedup_recent) >= 40:
+            break
+
+    return {
+        "mmdvmhostState": services.get("mmdvmhost", "inactive"),
+        "mmdvmBridgeState": services.get("mmdvm_bridge", "inactive"),
+        "activeTransmissions": [_strip_internal(x) for x in all_active],
+        "recentUsers": dedup_recent,
+        "lastError": last_error if services.get("mmdvmhost") != "active" else None,
+    }
+
+
 def _run_apply_config_worker(cfg: dict) -> None:
     a = cfg["allstar"]
     d = cfg["dvswitch"]
@@ -1728,6 +2358,31 @@ class WebGuiHandler(http.server.SimpleHTTPRequestHandler):
                 "services": services,
                 "detectedNodes": _detect_rpt_nodes(),
                 "hasSavedConfig": os.path.isfile(SAVED_CONFIG_FILE),
+            })
+            return
+
+        if path == "/api/live":
+            services = {}
+            for svc in SERVICES:
+                try:
+                    res = subprocess.run(
+                        ["systemctl", "is-active", svc],
+                        capture_output=True,
+                        text=True,
+                        timeout=2,
+                    )
+                    services[svc] = res.stdout.strip() or "inactive"
+                except Exception:
+                    services[svc] = "unknown"
+            uptime_s, cpu_temp_c = _read_host_metrics()
+            self._send_json(200, {
+                "timestamp": _now_iso(),
+                "hostname": socket.gethostname(),
+                "uptimeSeconds": uptime_s,
+                "cpuTempC": cpu_temp_c,
+                "services": services,
+                "allstar": _collect_allstar_live(services.get("asterisk") == "active"),
+                "mmdvm": _collect_mmdvm_live(services),
             })
             return
 

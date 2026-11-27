@@ -13,6 +13,61 @@ export interface InstallJobStatus {
   logs: string[];
 }
 
+export interface ConnectedAslNode {
+  node: string;
+  callsign: string;
+  peer: string;
+  mode: string;
+  direction: string;
+  elapsed: string;
+  state: string;
+  keyed: boolean;
+}
+
+export interface LocalAslNodeStatus {
+  node: string;
+  registered: string;
+  connectedCount: number;
+  connectedNodes: ConnectedAslNode[];
+  rawOutput: string;
+}
+
+export interface MmdvmUserActivity {
+  id: string;
+  timestamp: string;
+  callsign: string;
+  dmrId: string;
+  mode: string;
+  modeGroup: 'DMR' | 'YSF' | 'D-Star' | 'P25' | 'NXDN' | 'Other';
+  source: 'RF' | 'Net';
+  target: string;
+  duration: string;
+  ber: string;
+  loss: string;
+  active: boolean;
+  service: string;
+}
+
+export interface LiveTelemetry {
+  timestamp: string;
+  hostname: string;
+  uptimeSeconds: number | null;
+  cpuTempC: number | null;
+  services: Record<string, string>;
+  allstar: {
+    active: boolean;
+    nodes: LocalAslNodeStatus[];
+    totalConnected: number;
+  };
+  mmdvm: {
+    mmdvmhostState: string;
+    mmdvmBridgeState: string;
+    activeTransmissions: MmdvmUserActivity[];
+    recentUsers: MmdvmUserActivity[];
+    lastError: string | null;
+  };
+}
+
 export type ServiceAction = 'start' | 'stop' | 'restart';
 export type AslCommandAction = 'connect' | 'monitor' | 'disconnect' | 'disconnect_all' | 'nodes';
 
@@ -28,6 +83,11 @@ export interface LocalNodeController {
   liveServices: Record<string, string> | null;
   detectedNodes: string[];
   hasSavedConfig: boolean;
+  liveTelemetry: LiveTelemetry | null;
+  liveLoading: boolean;
+  autoRefresh: boolean;
+  setAutoRefresh: (enabled: boolean) => void;
+  refreshLive: () => Promise<void>;
   installJob: InstallJobStatus;
   refreshNode: () => Promise<void>;
   claimAdmin: (password: string) => Promise<boolean>;
@@ -76,6 +136,9 @@ export function useLocalNode(): LocalNodeController {
   const [liveServices, setLiveServices] = useState<Record<string, string> | null>(null);
   const [detectedNodes, setDetectedNodes] = useState<string[]>([]);
   const [hasSavedConfig, setHasSavedConfig] = useState(false);
+  const [liveTelemetry, setLiveTelemetry] = useState<LiveTelemetry | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
   const [installJob, setInstallJob] = useState<InstallJobStatus>(INITIAL_JOB);
 
   const fetchInstallStatus = useCallback(async (activeToken: string) => {
@@ -92,6 +155,24 @@ export function useLocalNode(): LocalNodeController {
       setInstallJob(data);
     } catch {
       // Ignore transient polling errors
+    }
+  }, []);
+
+  const refreshLive = useCallback(async () => {
+    setLiveLoading(true);
+    try {
+      const res = await fetch('/api/live');
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || !contentType.includes('application/json')) return;
+      const data = (await res.json()) as LiveTelemetry;
+      setLiveTelemetry(data);
+      if (data.services) {
+        setLiveServices(data.services);
+      }
+    } catch {
+      // Ignore transient telemetry fetch errors
+    } finally {
+      setLiveLoading(false);
     }
   }, []);
 
@@ -141,16 +222,25 @@ export function useLocalNode(): LocalNodeController {
         }
         setHasSavedConfig(Boolean(svcData.hasSavedConfig));
       }
+      await refreshLive();
     } catch {
       setLocalNodeAvailable(false);
     } finally {
       setChecking(false);
     }
-  }, [token]);
+  }, [token, refreshLive]);
 
   useEffect(() => {
     refreshNode();
   }, [refreshNode]);
+
+  useEffect(() => {
+    if (!localNodeAvailable || !autoRefresh) return;
+    const timer = window.setInterval(() => {
+      refreshLive();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [localNodeAvailable, autoRefresh, refreshLive]);
 
   useEffect(() => {
     if (!localNodeAvailable || !token) return;
@@ -341,12 +431,15 @@ export function useLocalNode(): LocalNodeController {
         if (data.state) {
           setLiveServices((prev) => ({ ...(prev || {}), [service]: data.state! }));
         }
+        window.setTimeout(() => {
+          refreshLive();
+        }, 600);
         return { ok: true, state: data.state };
       } catch {
         return { ok: false, error: 'Unable to communicate with local node server.' };
       }
     },
-    [token]
+    [token, refreshLive]
   );
 
   const runAslCommand = useCallback(
@@ -372,12 +465,15 @@ export function useLocalNode(): LocalNodeController {
           if (res.status === 401) setToken(null);
           return { ok: false, error: data.error || 'Asterisk command failed.' };
         }
+        window.setTimeout(() => {
+          refreshLive();
+        }, 800);
         return { ok: true, output: data.output || '' };
       } catch {
         return { ok: false, error: 'Unable to communicate with local node server.' };
       }
     },
-    [token]
+    [token, refreshLive]
   );
 
   return {
@@ -392,6 +488,11 @@ export function useLocalNode(): LocalNodeController {
     liveServices,
     detectedNodes,
     hasSavedConfig,
+    liveTelemetry,
+    liveLoading,
+    autoRefresh,
+    setAutoRefresh,
+    refreshLive,
     installJob,
     refreshNode,
     claimAdmin,
